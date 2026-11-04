@@ -14,7 +14,12 @@ function isHubReportHook(value: unknown): boolean {
   });
 }
 
-export async function installClaudeHook(settingsPath: string, command: string): Promise<void> {
+export interface StatusLineInstall {
+  command: string;
+  configPath: string;
+}
+
+export async function installClaudeHook(settingsPath: string, command: string, statusLine?: StatusLineInstall): Promise<void> {
   let settings: JsonObject = {};
   let existingMode = 0o600;
   let exists = false;
@@ -36,6 +41,17 @@ export async function installClaudeHook(settingsPath: string, command: string): 
     { hooks: [{ type: 'command', command, timeout: 20, async: true }] },
   ];
   settings.hooks = hooks;
+
+  if (statusLine) {
+    const current = object(settings.statusLine) ? settings.statusLine : {};
+    const currentCommand = typeof current.command === 'string' ? current.command : '';
+    if (currentCommand && !currentCommand.includes('claude-hub-agent') && !currentCommand.includes('/agent/cli.ts')) {
+      await mkdir(dirname(statusLine.configPath), { recursive: true });
+      await writeFile(statusLine.configPath, `${JSON.stringify({ command: currentCommand }, null, 2)}\n`, { mode: 0o600 });
+      await chmod(statusLine.configPath, 0o600);
+    }
+    settings.statusLine = { ...current, type: 'command', command: statusLine.command };
+  }
 
   await mkdir(dirname(settingsPath), { recursive: true });
   if (exists) await copyFile(settingsPath, `${settingsPath}.claude-hub.bak`);

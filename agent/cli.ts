@@ -5,6 +5,7 @@ import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
+import { spawn } from 'node:child_process';
 import { emptyState, scanClaudeHome, type AgentState } from './scan.ts';
 import { USERNAME_RE } from '../hub/validate.ts';
 import { nextWeeklyReset } from '../hub/schedule.ts';
@@ -14,6 +15,8 @@ import { installClaudeHook } from './hook.ts';
 const VERSION = '0.1.0';
 const CONFIG_PATH = join(homedir(), '.claude-storage-agent.json');
 const STATE_PATH = join(homedir(), '.claude-storage-agent.state.json');
+const RATE_LIMIT_PATH = join(homedir(), '.claude-storage-agent.rate-limits.json');
+const STATUS_LINE_CONFIG_PATH = join(homedir(), '.claude-storage-agent.statusline.json');
 
 interface AgentConfig { hub: string; username: string; machineId: string; machineToken: string }
 
@@ -91,8 +94,8 @@ async function register(args: string[]): Promise<void> {
   console.info(`Đã đăng ký máy cho ${username}.`);
 }
 
-export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), schedule: ResetSchedule | null = null) {
-  const scanned = await scanClaudeHome(claudeHome, state, now, schedule ? nextWeeklyReset(now, schedule) : undefined);
+export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), schedule: ResetSchedule | null = null, rateLimitCachePath = RATE_LIMIT_PATH) {
+  const scanned = await scanClaudeHome(claudeHome, state, now, schedule ? nextWeeklyReset(now, schedule) : undefined, rateLimitCachePath);
   return {
     payload: { machineId: config.machineId, ...scanned.payload, agentVersion: VERSION, sentAtMs: now },
     state: scanned.state,
@@ -128,8 +131,41 @@ async function installHook(args: string[]): Promise<void> {
   const commandIndex = args.indexOf('--command');
   const command = commandIndex >= 0 ? args[commandIndex + 1] : `node ${JSON.stringify(resolve(process.argv[1]))} report`;
   if (!command) throw new Error('Thiếu command cho hook.');
-  await installClaudeHook(join(homedir(), '.claude', 'settings.json'), command);
-  console.info('Đã cài hook Stop. Mỗi lượt chat hoàn tất sẽ gửi một báo cáo lên hub.');
+  const statusLineCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(resolve(process.argv[1]))} statusline`;
+  await installClaudeHook(join(homedir(), '.claude', 'settings.json'), command, { command: statusLineCommand, configPath: STATUS_LINE_CONFIG_PATH });
+  console.info('Đã cài statusLine + hook Stop. Quota được ghi từ response và gửi khi mỗi lượt chat hoàn tất.');
+}
+
+type LimitWindow = { used_percentage?: unknown; utilization?: unknown; resets_at?: unknown };
+
+function safeWindow(value: unknown): { usedPercentage: number; resetsAt?: string | number } | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as LimitWindow;
+  const percent = typeof raw.used_percentage === 'number' ? raw.used_percentage : typeof raw.utilization === 'number' ? raw.utilization : undefined;
+  if (percent === undefined || !Number.isFinite(percent)) return null;
+  const resetsAt = typeof raw.resets_at === 'string' || typeof raw.resets_at === 'number' ? raw.resets_at : undefined;
+  return { usedPercentage: percent, ...(resetsAt === undefined ? {} : { resetsAt }) };
+}
+
+async function statusline(): Promise<void> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stdin) chunks.push(Buffer.from(chunk));
+  const input = Buffer.concat(chunks);
+  try {
+    const payload = JSON.parse(input.toString('utf8')) as { rate_limits?: { five_hour?: unknown; seven_day?: unknown } };
+    const fiveHour = safeWindow(payload.rate_limits?.five_hour);
+    const sevenDay = safeWindow(payload.rate_limits?.seven_day);
+    if (fiveHour || sevenDay) await writePrivateJson(RATE_LIMIT_PATH, { fetchedAtMs: Date.now(), fiveHour, sevenDay });
+  } catch { /* Claude may call statusLine before rate_limits are available. */ }
+
+  const previous = await readJson<{ command?: unknown }>(STATUS_LINE_CONFIG_PATH);
+  if (typeof previous?.command !== 'string' || !previous.command) return;
+  await new Promise<void>((resolvePromise) => {
+    const child = spawn('/bin/sh', ['-lc', previous.command as string], { stdio: ['pipe', 'inherit', 'inherit'] });
+    child.on('error', () => resolvePromise());
+    child.on('close', () => resolvePromise());
+    child.stdin.end(input);
+  });
 }
 
 async function main(): Promise<void> {
@@ -138,7 +174,8 @@ async function main(): Promise<void> {
   if (command === 'report') return report();
   if (command === 'print-hook') return printHook();
   if (command === 'install-hook') return installHook(args);
-  throw new Error('Cách dùng: node agent/cli.ts <register|report|print-hook|install-hook>');
+  if (command === 'statusline') return statusline();
+  throw new Error('Cách dùng: node agent/cli.ts <register|report|print-hook|install-hook|statusline>');
 }
 
 if (resolve(process.argv[1] ?? '') === resolve(new URL(import.meta.url).pathname)) {

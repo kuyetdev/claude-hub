@@ -54,6 +54,21 @@ test('sang tuần mới xóa tổng cũ', async () => {
   assert.deepEqual(second.payload.tokensByModel, {});
 });
 
+test('quota statusLine mới nhất được ưu tiên hơn cache trong claude.json', async () => {
+  const fixture = await fakeClaudeHome();
+  const rateLimits = join(fixture.home, '.claude-storage-agent.rate-limits.json');
+  await writeFile(rateLimits, JSON.stringify({
+    fetchedAtMs: 1772618400000,
+    fiveHour: { usedPercentage: 12.5, resetsAt: 1772622000 },
+    sevenDay: { usedPercentage: 41.25, resetsAt: 1773223200 },
+  }));
+  const result = await scanClaudeHome(fixture.claude, emptyState(), 1772618400000, undefined, rateLimits);
+  assert.equal(result.payload.utilization.weeklyPercent, 41.25);
+  assert.equal(result.payload.utilization.fiveHourPercent, 12.5);
+  assert.equal(result.payload.utilization.fetchedAtMs, 1772618400000);
+  assert.equal(result.payload.utilization.accountResetsAt, '2026-03-11T10:00:00.000Z');
+});
+
 test('lịch hub thay ranh giới kỳ token nhưng giữ giờ reset hạn mức Claude', async () => {
   const fixture = await fakeClaudeHome();
   await writeFile(fixture.file, `${line('m1', 'r1', 10)}\n`);

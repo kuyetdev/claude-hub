@@ -66,7 +66,7 @@ node agent/cli.ts register --hub http://100.x.y.z:4318
 
 Agent hỏi username và `HUB_ENROLL_KEY`; khóa đăng ký được nhập ẩn và không lưu. Username giống nhau được xem là cùng một người. Agent tạo UUID riêng, không dùng `machineID` của Claude Code, rồi lưu cấu hình tại `~/.claude-storage-agent.json` với quyền `0600`.
 
-Dashboard có mục **Cài máy mới** để tạo lệnh cài một dòng cho Ubuntu hoặc macOS. Script cài Node.js 24 qua NVM nếu máy chưa có, đặt agent tại `~/.local/share/claude-hub-agent`, tạo lệnh `~/.local/bin/claude-hub-agent`, rồi mở bước đăng ký tương tác. Script không chứa enroll key. Sau khi đăng ký, script thêm hook `Stop` vào `~/.claude/settings.json` và tạo backup `settings.json.claude-hub.bak`; các settings và hook khác được giữ nguyên.
+Dashboard có mục **Cài máy mới** để tạo lệnh cài một dòng cho Ubuntu hoặc macOS. Script cài Node.js 24 qua NVM nếu máy chưa có, đặt agent tại `~/.local/share/claude-hub-agent`, tạo lệnh `~/.local/bin/claude-hub-agent`, rồi mở bước đăng ký tương tác. Script không chứa enroll key. Sau khi đăng ký, script thêm bộ thu quota `statusLine` và hook `Stop` vào `~/.claude/settings.json`, đồng thời tạo backup `settings.json.claude-hub.bak`; status line, settings và hook có sẵn vẫn được giữ và chạy tiếp.
 
 Chạy lại `register` sẽ hỏi xác nhận; nếu đồng ý, hub thu hồi token cũ của máy đó.
 
@@ -76,7 +76,7 @@ Chạy lại `register` sẽ hỏi xác nhận; nếu đồng ý, hub thu hồi 
 node agent/cli.ts report
 ```
 
-Agent chỉ đọc các trường usage cần thiết trong `~/.claude.json` và token tổng hợp từ `~/.claude/projects/**/*.jsonl`; không đọc `~/.claude/sessions/*.key`, nội dung `settings.json`, prompt, nội dung message, tên file hay đường dẫn project để gửi đi. Mỗi hook chỉ gửi số liệu tổng hợp.
+Agent lấy `rate_limits` trực tiếp từ dữ liệu `statusLine` mà Claude CLI cung cấp sau API response (cùng hướng với Orca), dùng cache usage trong `~/.claude.json` làm fallback, và cộng token tổng hợp từ `~/.claude/projects/**/*.jsonl`. Agent không đọc `~/.claude/sessions/*.key`, prompt hay nội dung message để gửi đi. Mỗi hook chỉ gửi số liệu tổng hợp; cache `statusLine` quá 24 giờ không được dùng.
 
 Agent quét tăng dần và giữ offset trong `~/.claude-storage-agent.state.json` (quyền `0600`). Khi tuần đổi, tổng cũ được xóa.
 
@@ -88,7 +88,7 @@ In JSON hook để tự dán vào cấu hình Claude Code:
 node agent/cli.ts print-hook
 ```
 
-Installer tự thêm hook `Stop`; mỗi lượt chat Claude hoàn tất sẽ gọi `report` một lần. Agent quét tăng dần và khử trùng nên message đã thấy không bị cộng lại.
+Installer tự thêm hook `Stop`; mỗi lượt chat Claude hoàn tất mới gọi `report` một lần. Lúc đó quota từ response mới nhất và token của câu trả lời đã sẵn sàng. Agent quét tăng dần và khử trùng nên message đã thấy không bị cộng lại.
 
 ## Quota và dashboard
 
@@ -133,7 +133,7 @@ Body bị giới hạn 64 KB. Báo cáo vẫn phải dùng Bearer token riêng c
 ## Cấu trúc
 
 ```text
-agent/   CLI register, report, print-hook; quét usage tăng dần
+agent/   CLI register, report, statusline, print-hook; quét usage tăng dần
 hub/     HTTP API, SQLite, quota, phép quy đổi, cảnh báo Telegram
 server/  che secret trước khi chuỗi ra UI hoặc log
 shared/  kiểu dữ liệu dùng chung

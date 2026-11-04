@@ -21,6 +21,12 @@ interface ClaudeConfig {
   };
 }
 
+interface RateLimitCache {
+  fetchedAtMs?: unknown;
+  fiveHour?: { usedPercentage?: unknown; resetsAt?: unknown } | null;
+  sevenDay?: { usedPercentage?: unknown; resetsAt?: unknown } | null;
+}
+
 export function emptyState(): AgentState {
   return { files: {}, seen: [], tokensByModel: {} };
 }
@@ -59,17 +65,33 @@ function addTokens(target: TokenTotals, source: TokenTotals): void {
   target.cacheRead += source.cacheRead;
 }
 
-export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
+function resetIso(value: unknown): string | undefined {
+  const raw = typeof value === 'number' ? new Date(value * 1000) : typeof value === 'string' ? new Date(value) : undefined;
+  return raw && Number.isFinite(raw.getTime()) ? raw.toISOString() : undefined;
+}
+
+export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string, rateLimitCachePath?: string): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
   const rawConfig = await readFile(join(claudeHome, '..', '.claude.json'), 'utf8');
   const config = JSON.parse(rawConfig) as ClaudeConfig;
   const accountUuid = config.oauthAccount?.accountUuid;
   const cached = config.cachedUsageUtilization;
+  let live: RateLimitCache | undefined;
+  if (rateLimitCachePath) {
+    try { live = JSON.parse(await readFile(rateLimitCachePath, 'utf8')) as RateLimitCache; } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  }
+  const liveFetchedAt = typeof live?.fetchedAtMs === 'number' ? live.fetchedAtMs : undefined;
+  const liveIsCurrent = liveFetchedAt !== undefined && liveFetchedAt <= now + 60_000 && liveFetchedAt >= now - 24 * 60 * 60 * 1000;
+  const liveWeekly = liveIsCurrent && typeof live?.sevenDay?.usedPercentage === 'number' ? live.sevenDay.usedPercentage : undefined;
+  const useLiveRateLimits = liveWeekly !== undefined;
+  const liveReset = useLiveRateLimits ? resetIso(live?.sevenDay?.resetsAt) : undefined;
   const week = cached?.utilization?.seven_day;
   if (typeof accountUuid !== 'string' || accountUuid.length < 3) throw new Error('Không tìm thấy accountUuid trong ~/.claude.json.');
-  if (typeof week?.resets_at !== 'string' || !Number.isFinite(Date.parse(week.resets_at))) throw new Error('Không tìm thấy giờ reset tuần trong ~/.claude.json.');
-  if (typeof week.utilization !== 'number' || typeof cached?.fetchedAtMs !== 'number') throw new Error('Không tìm thấy số liệu usage tuần trong ~/.claude.json.');
+  if (!liveReset && (typeof week?.resets_at !== 'string' || !Number.isFinite(Date.parse(week.resets_at)))) throw new Error('Không tìm thấy giờ reset tuần trong ~/.claude.json.');
+  if (liveWeekly === undefined && (typeof week?.utilization !== 'number' || typeof cached?.fetchedAtMs !== 'number')) throw new Error('Không tìm thấy số liệu usage tuần trong ~/.claude.json.');
 
-  const accountResetAt = new Date(week.resets_at).toISOString();
+  const accountResetAt = liveReset ?? new Date(week!.resets_at as string).toISOString();
   const weekKey = tokenResetAt ? new Date(tokenResetAt).toISOString() : accountResetAt;
   const state = previous.weekKey === weekKey ? structuredClone(previous) : emptyState();
   state.weekKey = weekKey;
@@ -106,9 +128,9 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
       accountUuid,
       weekResetsAt: weekKey,
       utilization: {
-        weeklyPercent: week.utilization,
-        fetchedAtMs: cached.fetchedAtMs,
-        fiveHourPercent: typeof cached.utilization?.five_hour?.utilization === 'number' ? cached.utilization.five_hour.utilization : null,
+        weeklyPercent: liveWeekly ?? week!.utilization as number,
+        fetchedAtMs: useLiveRateLimits ? liveFetchedAt! : cached!.fetchedAtMs as number,
+        fiveHourPercent: useLiveRateLimits && typeof live?.fiveHour?.usedPercentage === 'number' ? live.fiveHour.usedPercentage : typeof cached?.utilization?.five_hour?.utilization === 'number' ? cached.utilization.five_hour.utilization : null,
         accountResetsAt: accountResetAt,
       },
       tokensByModel: state.tokensByModel,
