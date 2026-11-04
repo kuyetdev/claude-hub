@@ -58,12 +58,18 @@ async function register(args: string[]): Promise<void> {
     if (!USERNAME_RE.test(username)) console.info('Username không hợp lệ, vui lòng nhập lại.');
   }
   const machineId = existing?.machineId ?? randomUUID();
-  const response = await fetch(`${hub}/api/register`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, machineId, hostname: hostname() }),
-    signal: AbortSignal.timeout(10_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${hub}/api/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, machineId, hostname: hostname() }),
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    const cause = error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : '';
+    throw new Error(`Không kết nối được Claude Hub tại ${hub}. Kiểm tra DNS, Cloudflare Tunnel và kết nối mạng.${cause}`);
+  }
   if (!response.ok) throw new Error(`Hub từ chối đăng ký (HTTP ${response.status}).`);
   const result = await response.json() as { machineToken?: unknown };
   if (typeof result.machineToken !== 'string' || result.machineToken.length < 32) throw new Error('Hub trả về dữ liệu không hợp lệ.');
