@@ -95,9 +95,10 @@ export class TelegramAlerts {
         await this.sendOnce(weekKey, `user:${user.username}`, String(threshold), this.userMilestoneText(user, state), timestamp);
       }
     }
+    const accountWeekKey = state.accountResetAt ?? weekKey;
     for (const threshold of [80, 100]) {
       if (state.accountPercent >= threshold) {
-        await this.sendOnce(weekKey, 'account', String(threshold), `⚠️ Cả tài khoản đã dùng ${formatNumber(state.accountPercent)}% hạn mức tuần. Reset: ${formatReset(state.accountResetAt ?? state.resetAt, this.config.timezone)} (${this.config.timezone}).`, timestamp);
+        await this.sendOnce(accountWeekKey, 'account', String(threshold), `⚠️ Cả tài khoản đã dùng ${formatNumber(state.accountPercent)}% hạn mức tuần. Reset: ${formatReset(state.accountResetAt ?? state.resetAt, this.config.timezone)} (${this.config.timezone}).`, timestamp);
       }
     }
     const day = localDate(timestamp, this.config.timezone);
@@ -106,8 +107,8 @@ export class TelegramAlerts {
       if (user.quotaRatioPercent < 100 || this.hasMilestoneToday(weekKey, scope, day)) continue;
       await this.sendOnce(weekKey, scope, `daily:${day}`, `🔁 ${user.username} vẫn vượt quota: ${formatNumber(user.usedPercent)}% / ${formatNumber(user.quotaPercent)}%. Cả tài khoản: ${formatNumber(state.accountPercent)}%.`, timestamp);
     }
-    if (state.accountPercent >= 100 && !this.hasMilestoneToday(weekKey, 'account', day)) {
-      await this.sendOnce(weekKey, 'account', `daily:${day}`, `🔁 Cả tài khoản vẫn vượt hạn mức tuần: ${formatNumber(state.accountPercent)}%.`, timestamp);
+    if (state.accountPercent >= 100 && !this.hasMilestoneToday(accountWeekKey, 'account', day)) {
+      await this.sendOnce(accountWeekKey, 'account', `daily:${day}`, `🔁 Cả tài khoản vẫn vượt hạn mức tuần: ${formatNumber(state.accountPercent)}%.`, timestamp);
     }
   }
 }
