@@ -82,7 +82,7 @@ export class TelegramAlerts {
   }
 
   private userMilestoneText(user: UserState, state: HubState): string {
-    return `⚠️ ${user.username} đã dùng ${formatNumber(user.quotaRatioPercent)}% quota tuần (${formatNumber(user.usedPercent)}% / ${formatNumber(user.quotaPercent)}%). Cả tài khoản: ${formatNumber(state.accountPercent)}%. Reset: ${formatReset(state.resetAt, this.config.timezone)} (${this.config.timezone}).`;
+    return `⚠️ ${user.username} đã dùng ${formatNumber(user.quotaRatioPercent)}% quota tuần (${formatNumber(user.usedPercent)}% / ${formatNumber(user.quotaPercent)}%). Cả tài khoản: ${formatNumber(state.accountPercent)}%. Reset: ${formatReset(state.accountResetAt ?? state.resetAt, this.config.timezone)} (${this.config.timezone}).`;
   }
 
   async check(weekKey: string): Promise<void> {
@@ -97,7 +97,7 @@ export class TelegramAlerts {
     }
     for (const threshold of [80, 100]) {
       if (state.accountPercent >= threshold) {
-        await this.sendOnce(weekKey, 'account', String(threshold), `⚠️ Cả tài khoản đã dùng ${formatNumber(state.accountPercent)}% hạn mức tuần. Reset: ${formatReset(state.resetAt, this.config.timezone)} (${this.config.timezone}).`, timestamp);
+        await this.sendOnce(weekKey, 'account', String(threshold), `⚠️ Cả tài khoản đã dùng ${formatNumber(state.accountPercent)}% hạn mức tuần. Reset: ${formatReset(state.accountResetAt ?? state.resetAt, this.config.timezone)} (${this.config.timezone}).`, timestamp);
       }
     }
     const day = localDate(timestamp, this.config.timezone);

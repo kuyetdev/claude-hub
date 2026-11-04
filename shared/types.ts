@@ -9,6 +9,13 @@ export interface Utilization {
   weeklyPercent: number;
   fetchedAtMs: number;
   fiveHourPercent: number | null;
+  accountResetsAt?: string;
+}
+
+export interface ResetSchedule {
+  dayOfWeek: number;
+  time: string;
+  timezone: string;
 }
 
 export interface ReportPayload {
@@ -44,6 +51,8 @@ export interface HubState {
   fetchedAtMs: number | null;
   stale: boolean;
   resetAt: string | null;
+  accountResetAt: string | null;
+  resetSchedule: ResetSchedule | null;
   quotaTotal: number;
   quotaValid: boolean;
   telegramConfigured: boolean;

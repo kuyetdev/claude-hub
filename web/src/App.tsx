@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { HubState, UserState } from '../../shared/types.ts';
-import { getState, removeMachine, saveQuotas } from './api.ts';
+import { getState, removeMachine, saveQuotas, saveResetSchedule } from './api.ts';
 
 const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
 const dateTime = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+const DAYS = ['Chủ nhật', 'Thứ hai', 'Thứ ba', 'Thứ tư', 'Thứ năm', 'Thứ sáu', 'Thứ bảy'];
 
 function formatPercent(value: number): string { return `${number.format(value)}%`; }
 function formatTime(value: number | string | null): string { return value ? dateTime.format(new Date(value)) : 'Chưa có dữ liệu'; }
@@ -45,6 +46,8 @@ export function App() {
   const [adminKey, setAdminKey] = useState('');
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [resetDay, setResetDay] = useState('1');
+  const [resetTime, setResetTime] = useState('00:00');
 
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -52,6 +55,7 @@ export function App() {
       const next = await getState();
       setState(next); setError('');
       setDraft(Object.fromEntries(next.users.map((user) => [user.username, String(user.quotaPercent)])));
+      if (next.resetSchedule) { setResetDay(String(next.resetSchedule.dayOfWeek)); setResetTime(next.resetSchedule.time); }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không tải được dữ liệu.'); }
     finally { if (!silent) setLoading(false); }
   }, []);
@@ -83,6 +87,15 @@ export function App() {
     finally { setBusy(false); }
   }
 
+  async function submitReset(event: React.FormEvent) {
+    event.preventDefault(); setError(''); setNotice('');
+    if (!adminKey) { setError('Nhập HUB_ADMIN_KEY để lưu lịch reset.'); document.getElementById('admin-key')?.focus(); return; }
+    setBusy(true);
+    try { await saveResetSchedule(Number(resetDay), resetTime, adminKey); setNotice('Đã lưu lịch reset token tổng. Kỳ mới áp dụng từ báo cáo agent tiếp theo.'); await refresh(true); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được lịch reset.'); }
+    finally { setBusy(false); }
+  }
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand">
@@ -105,7 +118,8 @@ export function App() {
             <div className="account-value mono">{formatPercent(state.accountPercent)}</div>
             <Progress value={state.accountPercent} label={`Tài khoản đã dùng ${formatPercent(state.accountPercent)}`} />
             <div className="overview-meta">
-              <span><strong>Reset</strong>{formatTime(state.resetAt)}</span>
+              <span><strong>Reset token tổng</strong>{formatTime(state.resetAt)}</span>
+              <span><strong>Reset hạn mức Claude</strong>{formatTime(state.accountResetAt)}</span>
               <span><strong>Cập nhật lúc</strong>{formatTime(state.fetchedAtMs)} {state.stale && <b className="stale">Dữ liệu cũ</b>}</span>
             </div>
           </div>
@@ -123,6 +137,18 @@ export function App() {
           <form onSubmit={submitQuotas}>
             <div className="quota-fields">{state.users.map((user) => <label key={user.username}><span>{user.username}</span><span className="input-suffix"><input type="number" min="0" max="100" step="0.1" inputMode="decimal" value={draft[user.username] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [user.username]: event.target.value }))} required />%</span></label>)}</div>
             <div className="admin-actions"><label className="admin-key"><span>HUB_ADMIN_KEY</span><input id="admin-key" type="password" autoComplete="current-password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} required /></label><button className="primary-button" type="submit" disabled={busy || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
+          </form>
+        </section>
+
+        <section className="admin-panel" aria-labelledby="reset-title">
+          <div className="section-head"><div><p className="eyebrow">Chu kỳ tổng hợp</p><h2 id="reset-title">Lịch reset token tổng</h2></div>{state.resetSchedule && <span className="count">{state.resetSchedule.time} · {state.resetSchedule.timezone}</span>}</div>
+          <p className="helper">Chọn thời điểm mở kỳ token trọng số mới mỗi tuần. Lịch này không thay đổi giờ reset hạn mức do Claude cung cấp.</p>
+          <form onSubmit={submitReset}>
+            <div className="schedule-fields">
+              <label><span>Ngày trong tuần</span><select value={resetDay} onChange={(event) => setResetDay(event.target.value)}>{DAYS.map((day, index) => <option value={index} key={day}>{day}</option>)}</select></label>
+              <label><span>Giờ reset</span><input type="time" value={resetTime} onChange={(event) => setResetTime(event.target.value)} required /></label>
+              <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Đang lưu…' : 'Lưu lịch reset'}</button>
+            </div>
           </form>
         </section>
       </>}

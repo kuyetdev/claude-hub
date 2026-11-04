@@ -7,6 +7,8 @@ import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 import { emptyState, scanClaudeHome, type AgentState } from './scan.ts';
 import { USERNAME_RE } from '../hub/validate.ts';
+import { nextWeeklyReset } from '../hub/schedule.ts';
+import type { ResetSchedule } from '../shared/types.ts';
 
 const VERSION = '0.1.0';
 const CONFIG_PATH = join(homedir(), '.claude-storage-agent.json');
@@ -88,8 +90,8 @@ async function register(args: string[]): Promise<void> {
   console.info(`Đã đăng ký máy cho ${username}.`);
 }
 
-export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now()) {
-  const scanned = await scanClaudeHome(claudeHome, state, now);
+export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), schedule: ResetSchedule | null = null) {
+  const scanned = await scanClaudeHome(claudeHome, state, now, schedule ? nextWeeklyReset(now, schedule) : undefined);
   return {
     payload: { machineId: config.machineId, ...scanned.payload, agentVersion: VERSION, sentAtMs: now },
     state: scanned.state,
@@ -102,7 +104,12 @@ async function report(): Promise<void> {
   const state = await readJson<AgentState>(STATE_PATH) ?? emptyState();
   const now = Date.now();
   if (state.lastSentMs && now - state.lastSentMs < 60_000) { console.info('Bỏ qua: lần báo trước chưa đủ 60 giây.'); return; }
-  const result = await buildReport(config, state, join(homedir(), '.claude'), now);
+  const settingsResponse = await fetch(`${config.hub}/api/agent-settings`, {
+    headers: { authorization: `Bearer ${config.machineToken}` }, signal: AbortSignal.timeout(10_000),
+  });
+  if (!settingsResponse.ok) throw new Error(`Không lấy được lịch reset từ hub (HTTP ${settingsResponse.status}).`);
+  const settings = await settingsResponse.json() as { resetSchedule: ResetSchedule | null };
+  const result = await buildReport(config, state, join(homedir(), '.claude'), now, settings.resetSchedule);
   const response = await fetch(`${config.hub}/api/report`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.machineToken}` },
     body: JSON.stringify(result.payload), signal: AbortSignal.timeout(10_000),

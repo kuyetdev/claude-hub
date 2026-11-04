@@ -1,8 +1,8 @@
 import { resolve } from 'node:path';
 import type { WeightConfig } from '../shared/types.ts';
 
-function positiveNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
+function positiveNumber(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  const raw = env[name];
   if (raw === undefined || raw === '') return fallback;
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) throw new Error(`${name} phải là số không âm.`);
@@ -40,10 +40,10 @@ export function loadConfig(env = process.env): HubConfig {
     telegramToken: env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: env.TELEGRAM_CHAT_ID || undefined,
     weights: {
-      input: positiveNumber('HUB_WEIGHT_INPUT', 1),
-      output: positiveNumber('HUB_WEIGHT_OUTPUT', 5),
-      cacheCreation: positiveNumber('HUB_WEIGHT_CACHE_CREATION', 1.25),
-      cacheRead: positiveNumber('HUB_WEIGHT_CACHE_READ', 0.1),
+      input: positiveNumber(env, 'HUB_WEIGHT_INPUT', 1),
+      output: positiveNumber(env, 'HUB_WEIGHT_OUTPUT', 5),
+      cacheCreation: positiveNumber(env, 'HUB_WEIGHT_CACHE_CREATION', 1.25),
+      cacheRead: positiveNumber(env, 'HUB_WEIGHT_CACHE_READ', 0.1),
     },
   };
 }

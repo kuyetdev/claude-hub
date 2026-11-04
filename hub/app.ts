@@ -8,6 +8,7 @@ import type { ReportPayload } from '../shared/types.ts';
 import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
 import { computeState, updateQuotas } from './usage.ts';
+import { getResetSchedule, saveResetSchedule } from './schedule.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const REPORT_INTERVAL_MS = 30_000;
@@ -166,6 +167,10 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         void options.checkAlerts?.(weekKey).catch((error: unknown) => console.error(redact(`Không thể kiểm tra cảnh báo: ${error instanceof Error ? error.message : String(error)}`)));
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/api/agent-settings') {
+        if (!authorizeMachine(db, request)) return sendJson(response, 401, { error: 'Token máy không hợp lệ.' });
+        return sendJson(response, 200, { resetSchedule: getResetSchedule(db) });
+      }
       if (request.method === 'GET' && url.pathname === '/api/state') {
         return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now()));
       }
@@ -173,6 +178,10 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
         updateQuotas(db, await readJson(request));
         return sendJson(response, 200, { ok: true });
+      }
+      if (request.method === 'PUT' && url.pathname === '/api/reset-schedule') {
+        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
+        return sendJson(response, 200, { resetSchedule: saveResetSchedule(db, await readJson(request), config.timezone) });
       }
       const machineMatch = request.method === 'DELETE' ? url.pathname.match(/^\/api\/machines\/([^/]+)$/) : null;
       if (machineMatch) {
@@ -193,6 +202,7 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         const message = code === 'QUOTA_TOTAL' ? 'Tổng quota phải bằng 100%.' : code === 'QUOTA_USERS_MISMATCH' ? 'Danh sách người không khớp.' : 'Quota không hợp lệ.';
         return sendJson(response, 422, { error: message });
       }
+      if (code === 'INVALID_SCHEDULE') return sendJson(response, 422, { error: 'Lịch reset không hợp lệ.' });
       if (['INVALID_JSON', 'EMPTY_BODY', 'INVALID_REGISTER'].includes(code)) return sendJson(response, 400, { error: 'Dữ liệu không hợp lệ.' });
       console.error(redact(`Lỗi hub: ${error instanceof Error ? error.message : String(error)}`));
       return sendJson(response, 500, { error: 'Hub gặp lỗi nội bộ.' });

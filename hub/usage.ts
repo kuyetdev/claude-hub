@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { HubState, TokenTotals, UserState, Utilization, WeightConfig } from '../shared/types.ts';
+import { getResetSchedule, nextWeeklyReset } from './schedule.ts';
 
 interface ReportRow {
   username: string;
@@ -28,8 +29,15 @@ function parseJson<T>(value: string | null, fallback: T): T {
 }
 
 export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now()): HubState {
+  const schedule = getResetSchedule(db);
   const week = db.prepare('SELECT week_key AS weekKey FROM reports ORDER BY week_key DESC LIMIT 1').get() as { weekKey: string } | undefined;
-  const weekKey = week?.weekKey ?? null;
+  const weekKey = schedule ? nextWeeklyReset(now, schedule) : (week?.weekKey ?? null);
+  let latest: Utilization | undefined;
+  const utilizationRows = db.prepare('SELECT utilization_json AS utilizationJson FROM reports').all() as unknown as Array<{ utilizationJson: string }>;
+  for (const row of utilizationRows) {
+    const utilization = parseJson<Utilization | undefined>(row.utilizationJson, undefined);
+    if (utilization && (!latest || utilization.fetchedAtMs > latest.fetchedAtMs)) latest = utilization;
+  }
   const rows = db.prepare(`
     SELECT u.username, u.quota_percent AS quotaPercent,
       m.machine_id AS machineId, m.hostname, m.last_seen_ms AS lastSeenMs, m.agent_version AS agentVersion,
@@ -40,7 +48,6 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
     ORDER BY u.username, m.hostname
   `).all(weekKey ?? '') as unknown as ReportRow[];
   const byUser = new Map<string, UserState>();
-  let latest: Utilization | undefined;
   for (const row of rows) {
     let user = byUser.get(row.username);
     if (!user) {
@@ -55,8 +62,6 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
     }
     if (row.weekKey !== weekKey) continue;
     user.weightedTokens += weightedTokens(parseJson(row.tokensJson, {}), weights);
-    const utilization = parseJson<Utilization | undefined>(row.utilizationJson, undefined);
-    if (utilization && (!latest || utilization.fetchedAtMs > latest.fetchedAtMs)) latest = utilization;
   }
   const users = [...byUser.values()];
   const totalWeighted = users.reduce((sum, user) => sum + user.weightedTokens, 0);
@@ -69,6 +74,8 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   return {
     weekKey,
     resetAt: weekKey,
+    accountResetAt: latest?.accountResetsAt ?? (!schedule ? weekKey : null),
+    resetSchedule: schedule,
     accountPercent,
     fetchedAtMs: latest?.fetchedAtMs ?? null,
     stale: !latest || now - latest.fetchedAtMs > 30 * 60_000,

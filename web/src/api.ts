@@ -20,3 +20,9 @@ export function saveQuotas(quotas: Record<string, number>, adminKey: string): Pr
 export function removeMachine(machineId: string, adminKey: string): Promise<{ ok: true }> {
   return request(`/api/machines/${encodeURIComponent(machineId)}`, { method: 'DELETE', headers: { 'x-admin-key': adminKey } });
 }
+
+export function saveResetSchedule(dayOfWeek: number, time: string, adminKey: string): Promise<{ resetSchedule: unknown }> {
+  return request('/api/reset-schedule', {
+    method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-key': adminKey }, body: JSON.stringify({ dayOfWeek, time }),
+  });
+}

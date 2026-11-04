@@ -12,10 +12,10 @@
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
 body { margin: 0; min-width: 320px; min-height: 100dvh; background: radial-gradient(circle at 12% 0, color-mix(in srgb, var(--accent-soft) 65%, transparent), transparent 28rem), var(--bg); color: var(--text); font-size: 15px; line-height: 1.55; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { cursor: pointer; touch-action: manipulation; }
 button:disabled { cursor: not-allowed; opacity: .55; }
-button:focus-visible, input:focus-visible, a:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring) 65%, transparent); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring) 65%, transparent); outline-offset: 2px; }
 .skip-link { position: fixed; z-index: 100; left: 12px; top: 10px; padding: 10px 14px; background: var(--text); color: var(--bg); border-radius: 8px; transform: translateY(-150%); }
 .skip-link:focus { transform: none; }
 .app-shell { width: min(1240px, calc(100% - 40px)); margin: 0 auto; }
@@ -81,8 +81,9 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .quota-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
 label > span:first-child { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 650; }
 .input-suffix { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-input { width: 100%; min-width: 0; height: 44px; padding: 0 11px; color: var(--text); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 9px; }
-input:hover { border-color: var(--muted); }
+input, select { width: 100%; min-width: 0; height: 44px; padding: 0 11px; color: var(--text); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 9px; }
+input:hover, select:hover { border-color: var(--muted); }
+.schedule-fields { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(140px, .7fr) auto; align-items: end; gap: 12px; }
 .admin-actions { display: grid; grid-template-columns: minmax(220px, 1fr) auto; align-items: end; gap: 12px; margin-top: 16px; }
 .admin-key { max-width: 440px; }
 .empty-card, .loading-card { padding: 28px; color: var(--muted); }.empty-card h3 { margin: 0 0 4px; color: var(--text); }.empty-card p { margin: 0; }
@@ -92,5 +93,5 @@ footer { min-height: 82px; display: flex; justify-content: space-between; align-
 @media (max-width: 560px) {
   body { font-size: 16px; }.app-shell { width: min(100% - 24px, 1240px); }.topbar { min-height: 80px; }.brand p { display: none; }.secondary-button { width: 44px; padding: 0; font-size: 0; }.secondary-button svg { width: 20px; }
   .overview-main, .method-note, .admin-panel { padding: 20px; }.account-value { font-size: 48px; }.overview-meta { display: grid; gap: 8px; }.user-card { padding: 17px; }.machine { grid-template-columns: 8px minmax(0, 1fr) 36px; }.machine-status { display: none; }
-  .admin-actions { grid-template-columns: 1fr; }.admin-key { max-width: none; }.primary-button { width: 100%; }.banner { grid-template-columns: 1fr; }.section-head { align-items: center; } footer { align-items: flex-start; flex-direction: column; justify-content: center; }
+  .admin-actions, .schedule-fields { grid-template-columns: 1fr; }.admin-key { max-width: none; }.primary-button { width: 100%; }.banner { grid-template-columns: 1fr; }.section-head { align-items: center; } footer { align-items: flex-start; flex-direction: column; justify-content: center; }
 }

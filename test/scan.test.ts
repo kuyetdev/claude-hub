@@ -53,3 +53,15 @@ test('sang tuần mới xóa tổng cũ', async () => {
   const second = await scanClaudeHome(fixture.claude, first.state);
   assert.deepEqual(second.payload.tokensByModel, {});
 });
+
+test('lịch hub thay ranh giới kỳ token nhưng giữ giờ reset hạn mức Claude', async () => {
+  const fixture = await fakeClaudeHome();
+  await writeFile(fixture.file, `${line('m1', 'r1', 10)}\n`);
+  const report = await buildReport(
+    { hub: 'http://hub', username: 'alice', machineId: '7f19d0d8-8c54-4ee3-a463-8cc45f632b14', machineToken: 'token' },
+    emptyState(), fixture.claude, Date.parse('2026-11-04T10:00:00Z'),
+    { dayOfWeek: 4, time: '00:00', timezone: 'Asia/Ho_Chi_Minh' },
+  );
+  assert.equal(report.payload.weekResetsAt, '2026-11-04T17:00:00.000Z');
+  assert.equal(report.payload.utilization.accountResetsAt, '2026-11-05T17:00:00.000Z');
+});
