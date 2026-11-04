@@ -3,7 +3,7 @@ import type { HubConfig } from './config.ts';
 export type InstallPlatform = 'ubuntu' | 'macos';
 
 export function createInstallScript(platform: InstallPlatform, config: HubConfig): string {
-  const hubUrl = `http://${config.host}:${config.port}`;
+  const hubUrl = config.publicUrl ?? `http://${config.host}:${config.port}`;
   const prerequisites = platform === 'ubuntu'
     ? `if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
   echo "Đang cài curl và git..."

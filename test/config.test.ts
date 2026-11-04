@@ -7,4 +7,5 @@ test('cấu hình mặc định và trọng số đọc từ env truyền vào',
   assert.equal(config.host, '127.0.0.1');
   assert.equal(config.port, 4318);
   assert.equal(config.weights.output, 7);
+  assert.equal(loadConfig({ HUB_PUBLIC_URL: 'http://claudehub.ccam.io.vn' }).publicUrl, 'http://claudehub.ccam.io.vn');
 });

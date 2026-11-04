@@ -12,6 +12,7 @@ function positiveNumber(env: NodeJS.ProcessEnv, name: string, fallback: number):
 export interface HubConfig {
   host: string;
   port: number;
+  publicUrl?: string;
   dbPath: string;
   timezone: string;
   telegramToken?: string;
@@ -27,6 +28,7 @@ export function loadConfig(env = process.env): HubConfig {
   return {
     host: env.HUB_HOST ?? '127.0.0.1',
     port,
+    publicUrl: env.HUB_PUBLIC_URL || undefined,
     dbPath: resolve(env.HUB_DB_PATH ?? './data/hub.db'),
     timezone,
     telegramToken: env.TELEGRAM_BOT_TOKEN || undefined,

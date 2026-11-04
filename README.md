@@ -43,6 +43,7 @@ Nếu server không cài Node, có thể build image bằng `Dockerfile` và ch�
 |---|---:|---|---|
 | `HUB_HOST` | Không | `127.0.0.1` | Địa chỉ hub lắng nghe; khi chạy VPS hãy đặt IP Tailscale |
 | `HUB_PORT` | Không | `4318` | Cổng HTTP |
+| `HUB_PUBLIC_URL` | Không | Tự tạo từ host và port | URL public dùng trong script cài agent |
 | `HUB_DB_PATH` | Không | `./data/hub.db` | File SQLite |
 | `HUB_TZ` | Không | `Asia/Ho_Chi_Minh` | Múi giờ hiển thị và tính ngày nhắc |
 | `TELEGRAM_BOT_TOKEN` | Không | Không có | Token bot Telegram |
