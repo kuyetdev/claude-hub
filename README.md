@@ -35,6 +35,8 @@ npm start
 
 Mở `http://100.x.y.z:4318` từ một máy trong tailnet. `HUB_HOST` nên là IP Tailscale của VPS, không nên dùng `0.0.0.0`. Tailscale mã hóa đường truyền; project không dựng thêm HTTPS.
 
+Repo có sẵn unit systemd user tại `deploy/claude-hub.service`. Unit giả định source được đặt ở `~/apps/claude-hub` và biến môi trường nằm tại `~/.config/claude-hub/env` với quyền `0600`.
+
 ### Biến môi trường
 
 | Biến | Bắt buộc | Mặc định | Ý nghĩa |

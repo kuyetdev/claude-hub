@@ -1,0 +1,17 @@
+[Unit]
+Description=Claude Hub - theo dõi usage nhiều máy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/apps/claude-hub
+EnvironmentFile=%h/.config/claude-hub/env
+ExecStart=/usr/bin/env node hub/index.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
