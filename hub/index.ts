@@ -3,12 +3,14 @@ import { loadConfig } from './config.ts';
 import { openDatabase } from './db.ts';
 import { createHandler } from './app.ts';
 import { redact } from '../server/redact.ts';
+import { TelegramAlerts } from './telegram.ts';
 
 try {
   const config = loadConfig();
   const db = openDatabase(config.dbPath);
   if (!config.telegramToken || !config.telegramChatId) console.info('Telegram chưa cấu hình, bỏ qua cảnh báo.');
-  const server = createServer(createHandler(db, config));
+  const alerts = new TelegramAlerts(db, config);
+  const server = createServer(createHandler(db, config, { checkAlerts: (weekKey) => alerts.check(weekKey) }));
   server.listen(config.port, config.host, () => console.info(redact(`Claude Hub đang nghe tại http://${config.host}:${config.port}`)));
   const stop = () => server.close(() => { db.close(); process.exit(0); });
   process.on('SIGINT', stop);
