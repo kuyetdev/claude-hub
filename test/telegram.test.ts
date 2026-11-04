@@ -29,7 +29,7 @@ function mockFetch(statuses: number[] = []) {
 test('gửi các mốc 80, 100, 110 và không gửi trùng', async () => {
   const db = fixture(22); // quota 20 => 110%
   const mock = mockFetch();
-  const config = { ...TEST_CONFIG, telegramToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', telegramChatId: '1' };
+  const config = { ...TEST_CONFIG, telegramToken: 'telegram-test-token', telegramChatId: '1' };
   try {
     const alerts = new TelegramAlerts(db, config, mock.fn, () => Date.parse('2026-11-04T10:00:00Z'));
     await alerts.check(WEEK);
@@ -43,7 +43,7 @@ test('gửi các mốc 80, 100, 110 và không gửi trùng', async () => {
 test('gửi lỗi không đánh dấu và thử lại lần sau', async () => {
   const db = fixture(16); // 80% quota
   const mock = mockFetch([500, 200]);
-  const config = { ...TEST_CONFIG, telegramToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', telegramChatId: '1' };
+  const config = { ...TEST_CONFIG, telegramToken: 'telegram-test-token', telegramChatId: '1' };
   try {
     const alerts = new TelegramAlerts(db, config, mock.fn, () => 1);
     await alerts.check(WEEK);
@@ -56,7 +56,7 @@ test('gửi lỗi không đánh dấu và thử lại lần sau', async () => {
 test('nhắc hằng ngày theo HUB_TZ, bỏ qua ngày vừa có mốc và khi đã xuống dưới 100%', async () => {
   const db = fixture(22);
   const mock = mockFetch();
-  const config = { ...TEST_CONFIG, telegramToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', telegramChatId: '1' };
+  const config = { ...TEST_CONFIG, telegramToken: 'telegram-test-token', telegramChatId: '1' };
   let now = Date.parse('2026-11-04T16:30:00Z'); // 23:30 Việt Nam
   try {
     const alerts = new TelegramAlerts(db, config, mock.fn, () => now);
@@ -76,7 +76,7 @@ test('nhắc hằng ngày theo HUB_TZ, bỏ qua ngày vừa có mốc và khi đ
 test('tuần mới có thể gửi lại cùng ngưỡng', async () => {
   const db = fixture(16);
   const mock = mockFetch();
-  const config = { ...TEST_CONFIG, telegramToken: '123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi', telegramChatId: '1' };
+  const config = { ...TEST_CONFIG, telegramToken: 'telegram-test-token', telegramChatId: '1' };
   try {
     const alerts = new TelegramAlerts(db, config, mock.fn, () => 1);
     await alerts.check(WEEK);
