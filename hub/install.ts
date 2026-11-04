@@ -5,21 +5,19 @@ export type InstallPlatform = 'ubuntu' | 'macos';
 export function createInstallScript(platform: InstallPlatform, config: HubConfig): string {
   const hubUrl = config.publicUrl ?? `http://${config.host}:${config.port}`;
   const prerequisites = platform === 'ubuntu'
-    ? `if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "Đang cài curl và git..."
+    ? `if ! command -v curl >/dev/null 2>&1; then
+  echo "Đang cài curl..."
   sudo apt-get update
-  sudo apt-get install -y curl git ca-certificates
+  sudo apt-get install -y curl ca-certificates
 fi`
-    : `if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "Thiếu curl hoặc git. Hãy cài Xcode Command Line Tools bằng: xcode-select --install" >&2
+    : `if ! command -v curl >/dev/null 2>&1; then
+  echo "Thiếu curl. Hãy cài curl trước khi tiếp tục." >&2
   exit 1
 fi`;
   return `#!/usr/bin/env bash
 set -Eeuo pipefail
 
 HUB_URL=${JSON.stringify(hubUrl)}
-REPO_URL="https://github.com/kuyetdev/claude-hub.git"
-BRANCH="feat/hub-usage"
 INSTALL_DIR="\${CLAUDE_HUB_AGENT_DIR:-$HOME/.local/share/claude-hub-agent}"
 BIN_DIR="$HOME/.local/bin"
 NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"
@@ -40,14 +38,9 @@ if [ "$node_major" -lt 24 ]; then
 fi
 
 mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
-if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "Đang cập nhật Claude Hub Agent..."
-  git -C "$INSTALL_DIR" fetch origin "$BRANCH"
-  git -C "$INSTALL_DIR" checkout "$BRANCH"
-  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
-else
-  git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR"
-fi
+mkdir -p "$INSTALL_DIR"
+echo "Đang tải Claude Hub Agent từ $HUB_URL..."
+curl -fsSL "$HUB_URL/install/agent.tar.gz" | tar -xz -C "$INSTALL_DIR"
 
 cat > "$BIN_DIR/claude-hub-agent" <<'WRAPPER'
 #!/usr/bin/env bash
