@@ -6,7 +6,7 @@ import type { HubConfig } from '../hub/config.ts';
 
 export const TEST_CONFIG: HubConfig = {
   host: '127.0.0.1', port: 0, dbPath: ':memory:', timezone: 'Asia/Ho_Chi_Minh',
-  enrollKey: 'enroll-test-value', adminKey: 'admin-test-value',
+  enrollKey: 'enroll-test-value',
   weights: { input: 1, output: 5, cacheCreation: 1.25, cacheRead: 0.1 },
 };
 

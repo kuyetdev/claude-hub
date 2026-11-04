@@ -55,13 +55,15 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
       byUser.set(row.username, user);
     }
     if (row.machineId) {
+      const machineWeighted = row.weekKey === weekKey ? weightedTokens(parseJson(row.tokensJson, {}), weights) : 0;
       user.machines.push({
         machineId: row.machineId, hostname: row.hostname, lastSeenMs: row.lastSeenMs,
         agentVersion: row.agentVersion, offline: row.lastSeenMs === 0 || now - row.lastSeenMs > 30 * 60_000,
+        weightedTokens: machineWeighted, usedPercent: 0, observedSharePercent: 0,
       });
+      user.weightedTokens += machineWeighted;
     }
     if (row.weekKey !== weekKey) continue;
-    user.weightedTokens += weightedTokens(parseJson(row.tokensJson, {}), weights);
   }
   const users = [...byUser.values()];
   const totalWeighted = users.reduce((sum, user) => sum + user.weightedTokens, 0);
@@ -69,6 +71,10 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   for (const user of users) {
     user.usedPercent = totalWeighted > 0 ? accountPercent * user.weightedTokens / totalWeighted : 0;
     user.quotaRatioPercent = user.quotaPercent > 0 ? user.usedPercent / user.quotaPercent * 100 : (user.usedPercent > 0 ? 100 : 0);
+    for (const machine of user.machines) {
+      machine.observedSharePercent = totalWeighted > 0 ? machine.weightedTokens / totalWeighted * 100 : 0;
+      machine.usedPercent = totalWeighted > 0 ? accountPercent * machine.weightedTokens / totalWeighted : 0;
+    }
   }
   const quotaTotal = users.reduce((sum, user) => sum + user.quotaPercent, 0);
   return {

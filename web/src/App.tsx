@@ -28,7 +28,7 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
       <h4>Máy đã đăng ký <span>{user.machines.length}</span></h4>
       {user.machines.length === 0 ? <p className="empty">Chưa có máy.</p> : user.machines.map((machine) => <div className="machine" key={machine.machineId}>
         <span className={`dot ${machine.offline ? 'offline' : ''}`} aria-hidden="true" />
-        <div className="machine-copy"><strong>{machine.hostname}</strong><small>{machine.lastSeenMs ? `Báo lần cuối ${formatTime(machine.lastSeenMs)}` : 'Chưa gửi báo cáo'} · agent {machine.agentVersion || 'chưa rõ'}</small></div>
+        <div className="machine-copy"><strong>{machine.hostname}</strong><small>{machine.lastSeenMs ? `Báo lần cuối ${formatTime(machine.lastSeenMs)}` : 'Chưa gửi báo cáo'} · agent {machine.agentVersion || 'chưa rõ'}</small><small className="machine-usage">Ước tính đóng góp: {formatPercent(machine.usedPercent)} tài khoản · {formatPercent(machine.observedSharePercent)} token quan sát</small></div>
         <span className={`machine-status ${machine.offline ? 'offline' : ''}`}>{machine.offline ? 'Offline' : 'Online'}</span>
         <button className="icon-button" type="button" disabled={busy} onClick={() => onRemove(machine.machineId, machine.hostname)} aria-label={`Gỡ máy ${machine.hostname}`} title="Gỡ máy">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6m-9 4h12m-10 0 .7 13h6.6L16 7M10 10v7m4-7v7" /></svg>
@@ -43,11 +43,13 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [adminKey, setAdminKey] = useState('');
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [resetDay, setResetDay] = useState('1');
   const [resetTime, setResetTime] = useState('00:00');
+  const [showInstaller, setShowInstaller] = useState(false);
+  const [installPlatform, setInstallPlatform] = useState<'ubuntu' | 'macos'>('ubuntu');
+  const [copied, setCopied] = useState(false);
 
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -67,31 +69,43 @@ export function App() {
   }, [refresh]);
 
   const draftTotal = useMemo(() => Object.values(draft).reduce((sum, value) => sum + (Number(value) || 0), 0), [draft]);
+  const installCommand = `bash <(curl -fsSL ${window.location.origin}/install/${installPlatform}.sh)`;
+
+  async function copyInstallCommand() {
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(installCommand);
+      else throw new Error('Clipboard API không khả dụng');
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = installCommand;
+      textarea.style.position = 'fixed'; textarea.style.opacity = '0';
+      document.body.append(textarea); textarea.select(); document.execCommand('copy'); textarea.remove();
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2500);
+  }
 
   async function submitQuotas(event: React.FormEvent) {
     event.preventDefault(); setNotice(''); setError('');
-    if (!adminKey) { setError('Nhập HUB_ADMIN_KEY để lưu quota.'); return; }
     const quotas = Object.fromEntries(Object.entries(draft).map(([name, value]) => [name, Number(value)]));
     setBusy(true);
-    try { await saveQuotas(quotas, adminKey); setNotice('Đã lưu phân bổ quota.'); await refresh(true); }
+    try { await saveQuotas(quotas); setNotice('Đã lưu phân bổ quota.'); await refresh(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được quota.'); }
     finally { setBusy(false); }
   }
 
   async function handleRemove(machineId: string, host: string) {
-    if (!adminKey) { setError('Nhập HUB_ADMIN_KEY trước khi gỡ máy.'); document.getElementById('admin-key')?.focus(); return; }
     if (!window.confirm(`Gỡ máy “${host}”? Token máy sẽ bị thu hồi.`)) return;
     setBusy(true); setError(''); setNotice('');
-    try { await removeMachine(machineId, adminKey); setNotice(`Đã gỡ máy ${host}.`); await refresh(true); }
+    try { await removeMachine(machineId); setNotice(`Đã gỡ máy ${host}.`); await refresh(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không gỡ được máy.'); }
     finally { setBusy(false); }
   }
 
   async function submitReset(event: React.FormEvent) {
     event.preventDefault(); setError(''); setNotice('');
-    if (!adminKey) { setError('Nhập HUB_ADMIN_KEY để lưu lịch reset.'); document.getElementById('admin-key')?.focus(); return; }
     setBusy(true);
-    try { await saveResetSchedule(Number(resetDay), resetTime, adminKey); setNotice('Đã lưu lịch reset token tổng. Kỳ mới áp dụng từ báo cáo agent tiếp theo.'); await refresh(true); }
+    try { await saveResetSchedule(Number(resetDay), resetTime); setNotice('Đã lưu lịch reset token tổng. Kỳ mới áp dụng từ báo cáo agent tiếp theo.'); await refresh(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được lịch reset.'); }
     finally { setBusy(false); }
   }
@@ -128,15 +142,35 @@ export function App() {
 
         <section className="section" aria-labelledby="people-title">
           <div className="section-head"><div><p className="eyebrow">Phân bổ sử dụng</p><h2 id="people-title">Theo người</h2></div><span className="count">{state.users.length} người</span></div>
-          {state.users.length ? <div className="user-grid">{state.users.map((user) => <UserCard key={user.username} user={user} onRemove={handleRemove} busy={busy} />)}</div> : <div className="empty-card"><h3>Chưa có máy đăng ký</h3><p>Chạy lệnh register trên máy đầu tiên để bắt đầu.</p></div>}
+          {state.users.length ? <div className="user-grid">{state.users.map((user) => <UserCard key={user.username} user={user} onRemove={handleRemove} busy={busy} />)}</div> : <div className="empty-card"><h3>Chưa có máy đăng ký</h3><p>Cài agent trên máy Claude CLI đầu tiên để lấy usage hiện tại.</p><button className="primary-button empty-action" type="button" onClick={() => setShowInstaller(true)}>Cài máy đầu tiên</button></div>}
+        </section>
+
+        <section className="install-panel" aria-labelledby="install-title">
+          <div className="install-summary">
+            <div><p className="eyebrow">Thiết lập agent</p><h2 id="install-title">Cài máy mới</h2><p>Chạy một lệnh trên máy đang dùng Claude CLI. Script hỏi username và enroll key, rồi gửi usage ngay.</p></div>
+            <button className="secondary-button" type="button" aria-expanded={showInstaller} aria-controls="install-details" onClick={() => setShowInstaller((value) => !value)}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
+              {showInstaller ? 'Đóng hướng dẫn' : 'Lấy script cài đặt'}
+            </button>
+          </div>
+          {showInstaller && <div className="install-details" id="install-details">
+            <div className="platform-tabs" role="group" aria-label="Chọn hệ điều hành">
+              <button type="button" aria-pressed={installPlatform === 'ubuntu'} onClick={() => { setInstallPlatform('ubuntu'); setCopied(false); }}>Ubuntu</button>
+              <button type="button" aria-pressed={installPlatform === 'macos'} onClick={() => { setInstallPlatform('macos'); setCopied(false); }}>macOS</button>
+            </div>
+            <p className="install-note">Mở Terminal trên máy cần cài, dán lệnh dưới đây rồi nhập enroll key khi được hỏi.</p>
+            <div className="command-row"><code>{installCommand}</code><button className="primary-button copy-button" type="button" onClick={() => void copyInstallCommand()}>{copied ? 'Đã sao chép' : 'Sao chép lệnh'}</button></div>
+            <div className="install-meta"><span>Tự cài Node.js 24 nếu cần</span><span>Gửi sau mỗi lượt chat</span><a href={`/install/${installPlatform}.sh`} target="_blank" rel="noreferrer">Xem nội dung script</a></div>
+            <span className="sr-only" aria-live="polite">{copied ? 'Đã sao chép lệnh cài đặt.' : ''}</span>
+          </div>}
         </section>
 
         <section className="admin-panel" aria-labelledby="quota-title">
           <div className="section-head"><div><p className="eyebrow">Quản trị</p><h2 id="quota-title">Phân bổ quota</h2></div><span className={`total ${Math.abs(draftTotal - 100) <= .01 ? 'valid' : 'invalid'}`}>Tổng {number.format(draftTotal)}%</span></div>
-          <p className="helper">Khóa quản trị chỉ giữ trong bộ nhớ của tab này, không lưu vào trình duyệt.</p>
+          <p className="helper">Phân bổ quota cho toàn bộ người dùng. Tổng phải bằng 100%.</p>
           <form onSubmit={submitQuotas}>
             <div className="quota-fields">{state.users.map((user) => <label key={user.username}><span>{user.username}</span><span className="input-suffix"><input type="number" min="0" max="100" step="0.1" inputMode="decimal" value={draft[user.username] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [user.username]: event.target.value }))} required />%</span></label>)}</div>
-            <div className="admin-actions"><label className="admin-key"><span>HUB_ADMIN_KEY</span><input id="admin-key" type="password" autoComplete="current-password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} required /></label><button className="primary-button" type="submit" disabled={busy || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
+            <div className="admin-actions"><button className="primary-button" type="submit" disabled={busy || state.users.length === 0 || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
           </form>
         </section>
 

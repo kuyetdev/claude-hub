@@ -5,7 +5,6 @@ import type { ReportPayload, TokenTotals } from '../shared/types.ts';
 export interface AgentFileState { size: number; offset: number; ino?: number }
 export interface AgentState {
   weekKey?: string;
-  lastSentMs?: number;
   files: Record<string, AgentFileState>;
   seen: string[];
   tokensByModel: Record<string, TokenTotals>;

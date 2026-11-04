@@ -23,7 +23,6 @@ export HUB_HOST=100.x.y.z
 export HUB_PORT=4318
 export HUB_DB_PATH=/var/lib/claude-hub/hub.db
 export HUB_ENROLL_KEY='khóa-dùng-để-đăng-ký-máy'
-export HUB_ADMIN_KEY='khóa-quản-trị-dashboard'
 export HUB_TZ=Asia/Ho_Chi_Minh
 
 # Không bắt buộc. Thiếu hai biến này thì hub vẫn chạy, chỉ không gửi cảnh báo.
@@ -47,7 +46,6 @@ Nếu server không cài Node, có thể build image bằng `Dockerfile` và ch�
 | `HUB_PORT` | Không | `4318` | Cổng HTTP |
 | `HUB_DB_PATH` | Không | `./data/hub.db` | File SQLite |
 | `HUB_ENROLL_KEY` | Có | Không có | Khóa chung để đăng ký máy |
-| `HUB_ADMIN_KEY` | Có | Không có | Khóa sửa quota và gỡ máy |
 | `HUB_TZ` | Không | `Asia/Ho_Chi_Minh` | Múi giờ hiển thị và tính ngày nhắc |
 | `TELEGRAM_BOT_TOKEN` | Không | Không có | Token bot Telegram |
 | `TELEGRAM_CHAT_ID` | Không | Không có | Nơi nhận cảnh báo |
@@ -56,7 +54,7 @@ Nếu server không cài Node, có thể build image bằng `Dockerfile` và ch�
 | `HUB_WEIGHT_CACHE_CREATION` | Không | `1.25` | Trọng số cache tạo |
 | `HUB_WEIGHT_CACHE_READ` | Không | `0.1` | Trọng số cache đọc |
 
-Các secret không có giá trị mặc định. Hub không ghi token vào SQLite, log, API hoặc giao diện. Token máy chỉ lưu dưới dạng SHA-256.
+Enroll key không có giá trị mặc định. Hub không ghi token vào log, API hoặc giao diện. Token máy chỉ lưu dưới dạng SHA-256. Các API quản trị không có khóa riêng vì dashboard chỉ được phục vụ trong tailnet.
 
 ## Đăng ký từng máy
 
@@ -68,6 +66,8 @@ node agent/cli.ts register --hub http://100.x.y.z:4318
 
 Agent hỏi username và `HUB_ENROLL_KEY`; khóa đăng ký được nhập ẩn và không lưu. Username giống nhau được xem là cùng một người. Agent tạo UUID riêng, không dùng `machineID` của Claude Code, rồi lưu cấu hình tại `~/.claude-storage-agent.json` với quyền `0600`.
 
+Dashboard có mục **Cài máy mới** để tạo lệnh cài một dòng cho Ubuntu hoặc macOS. Script cài Node.js 24 qua NVM nếu máy chưa có, đặt agent tại `~/.local/share/claude-hub-agent`, tạo lệnh `~/.local/bin/claude-hub-agent`, rồi mở bước đăng ký tương tác. Script không chứa enroll key. Sau khi đăng ký, script thêm hook `Stop` vào `~/.claude/settings.json` và tạo backup `settings.json.claude-hub.bak`; các settings và hook khác được giữ nguyên.
+
 Chạy lại `register` sẽ hỏi xác nhận; nếu đồng ý, hub thu hồi token cũ của máy đó.
 
 ## Gửi báo cáo
@@ -76,7 +76,7 @@ Chạy lại `register` sẽ hỏi xác nhận; nếu đồng ý, hub thu hồi 
 node agent/cli.ts report
 ```
 
-Lệnh tự bỏ qua nếu lần gửi thành công trước đó chưa đủ 60 giây. Agent chỉ đọc các trường usage cần thiết trong `~/.claude.json` và token tổng hợp từ `~/.claude/projects/**/*.jsonl`; không đọc `~/.claude/sessions/*.key`, `settings.json`, prompt, nội dung message, tên file hay đường dẫn project để gửi đi.
+Agent chỉ đọc các trường usage cần thiết trong `~/.claude.json` và token tổng hợp từ `~/.claude/projects/**/*.jsonl`; không đọc `~/.claude/sessions/*.key`, nội dung `settings.json`, prompt, nội dung message, tên file hay đường dẫn project để gửi đi. Mỗi hook chỉ gửi số liệu tổng hợp.
 
 Agent quét tăng dần và giữ offset trong `~/.claude-storage-agent.state.json` (quyền `0600`). Khi tuần đổi, tổng cũ được xóa.
 
@@ -88,13 +88,13 @@ In JSON hook để tự dán vào cấu hình Claude Code:
 node agent/cli.ts print-hook
 ```
 
-Agent **không tự sửa** `settings.json`. Có thể dùng hook `Stop`, cron hoặc launchd mỗi 5 phút.
+Installer tự thêm hook `Stop`; mỗi lượt chat Claude hoàn tất sẽ gọi `report` một lần. Agent quét tăng dần và khử trùng nên message đã thấy không bị cộng lại.
 
 ## Quota và dashboard
 
 - Khi chưa chỉnh tay, quota được chia đều cho tất cả người.
 - Sau khi admin đã chỉnh quota, người mới nhận `0%`; dashboard báo tổng quota khác `100%` cho đến khi admin phân bổ lại.
-- Form quota bắt buộc đủ mọi người và tổng bằng `100%` (sai số tối đa `0,01`). `HUB_ADMIN_KEY` chỉ giữ trong state của tab, không lưu vào `localStorage`.
+- Form quota bắt buộc đủ mọi người và tổng bằng `100%` (sai số tối đa `0,01`).
 - Máy không báo quá 30 phút được đánh dấu offline. Usage tài khoản quá 30 phút được đánh dấu dữ liệu cũ.
 - Admin có thể chọn ngày trong tuần và giờ reset token tổng. Lịch dùng múi giờ `HUB_TZ`; agent lấy lịch trước mỗi lần quét và tự mở kỳ token mới. Giờ reset hạn mức Claude vẫn hiển thị riêng và không bị thay đổi.
 
@@ -103,9 +103,10 @@ Mức dùng người được ước lượng bằng:
 ```text
 weighted = input × 1 + output × 5 + cacheCreation × 1,25 + cacheRead × 0,1
 used_user = accountPercent × weighted_user / tổng weighted
+used_machine = accountPercent × weighted_machine / tổng weighted
 ```
 
-Đây chỉ là phép **quy đổi xấp xỉ để chia tương quan**, không phải công thức tính phí hay hạn mức của Anthropic. Cách này không xác định được phần dùng từ web/điện thoại.
+Dashboard hiển thị “ước tính đóng góp” cho từng máy. Đây chỉ là phép **quy đổi xấp xỉ để chia tương quan**, không phải công thức tính phí hay hạn mức của Anthropic. Khi chưa cài đủ máy, phần trăm của các máy đã quan sát có thể bị cao hơn thực tế; cách này cũng không xác định được phần dùng từ web/điện thoại.
 
 ## Cảnh báo Telegram
 
@@ -122,12 +123,12 @@ used_user = accountPercent × weighted_user / tổng weighted
 | `POST` | `/api/register` | `x-enroll-key` |
 | `POST` | `/api/report` | `Authorization: Bearer <machineToken>` |
 | `GET` | `/api/state` | Không; dựa vào tailnet |
-| `PUT` | `/api/quota` | `x-admin-key` |
-| `PUT` | `/api/reset-schedule` | `x-admin-key` |
+| `PUT` | `/api/quota` | Không; dựa vào tailnet |
+| `PUT` | `/api/reset-schedule` | Không; dựa vào tailnet |
 | `GET` | `/api/agent-settings` | Bearer token máy |
-| `DELETE` | `/api/machines/:id` | `x-admin-key` |
+| `DELETE` | `/api/machines/:id` | Không; dựa vào tailnet |
 
-Body bị giới hạn 64 KB. Báo cáo theo token máy bị giới hạn tối đa một lần mỗi 30 giây ở hub.
+Body bị giới hạn 64 KB. Báo cáo vẫn phải dùng Bearer token riêng của máy.
 
 ## Cấu trúc
 

@@ -9,6 +9,7 @@ import { emptyState, scanClaudeHome, type AgentState } from './scan.ts';
 import { USERNAME_RE } from '../hub/validate.ts';
 import { nextWeeklyReset } from '../hub/schedule.ts';
 import type { ResetSchedule } from '../shared/types.ts';
+import { installClaudeHook } from './hook.ts';
 
 const VERSION = '0.1.0';
 const CONFIG_PATH = join(homedir(), '.claude-storage-agent.json');
@@ -103,7 +104,6 @@ async function report(): Promise<void> {
   if (!config) throw new Error('Máy chưa đăng ký. Hãy chạy lệnh register trước.');
   const state = await readJson<AgentState>(STATE_PATH) ?? emptyState();
   const now = Date.now();
-  if (state.lastSentMs && now - state.lastSentMs < 60_000) { console.info('Bỏ qua: lần báo trước chưa đủ 60 giây.'); return; }
   const settingsResponse = await fetch(`${config.hub}/api/agent-settings`, {
     headers: { authorization: `Bearer ${config.machineToken}` }, signal: AbortSignal.timeout(10_000),
   });
@@ -115,7 +115,6 @@ async function report(): Promise<void> {
     body: JSON.stringify(result.payload), signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) throw new Error(`Hub từ chối báo cáo (HTTP ${response.status}).`);
-  result.state.lastSentMs = now;
   await writePrivateJson(STATE_PATH, result.state);
   console.info('Đã gửi số liệu tổng hợp lên hub.');
 }
@@ -125,12 +124,21 @@ function printHook(): void {
   console.info(JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: 'command', command: `node ${JSON.stringify(cli)} report` }] }] } }, null, 2));
 }
 
+async function installHook(args: string[]): Promise<void> {
+  const commandIndex = args.indexOf('--command');
+  const command = commandIndex >= 0 ? args[commandIndex + 1] : `node ${JSON.stringify(resolve(process.argv[1]))} report`;
+  if (!command) throw new Error('Thiếu command cho hook.');
+  await installClaudeHook(join(homedir(), '.claude', 'settings.json'), command);
+  console.info('Đã cài hook Stop. Mỗi lượt chat hoàn tất sẽ gửi một báo cáo lên hub.');
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'register') return register(args);
   if (command === 'report') return report();
   if (command === 'print-hook') return printHook();
-  throw new Error('Cách dùng: node agent/cli.ts <register|report|print-hook>');
+  if (command === 'install-hook') return installHook(args);
+  throw new Error('Cách dùng: node agent/cli.ts <register|report|print-hook|install-hook>');
 }
 
 if (resolve(process.argv[1] ?? '') === resolve(new URL(import.meta.url).pathname)) {

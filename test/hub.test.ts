@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { register, testServer, TEST_CONFIG } from './helpers.ts';
+import { register, testServer } from './helpers.ts';
+import { spawnSync } from 'node:child_process';
 
 test('đăng ký cần enroll key và thu hồi token cũ khi đăng ký lại', async () => {
   const app = await testServer();
@@ -15,7 +16,7 @@ test('đăng ký cần enroll key và thu hồi token cũ khi đăng ký lại',
   } finally { await app.close(); }
 });
 
-test('báo cáo kiểm tra schema, token máy, account và tần suất', async () => {
+test('báo cáo kiểm tra schema, token máy và nhận mỗi lượt chat', async () => {
   const app = await testServer();
   try {
     const { body } = await register(app.baseUrl);
@@ -29,7 +30,7 @@ test('báo cáo kiểm tra schema, token máy, account và tần suất', async 
     const headers = { 'content-type': 'application/json', authorization: `Bearer ${body.machineToken}` };
     assert.equal((await fetch(`${app.baseUrl}/api/report`, { method: 'POST', headers, body: '{}' })).status, 400);
     assert.equal((await fetch(`${app.baseUrl}/api/report`, { method: 'POST', headers, body: JSON.stringify(payload) })).status, 202);
-    assert.equal((await fetch(`${app.baseUrl}/api/report`, { method: 'POST', headers, body: JSON.stringify(payload) })).status, 429);
+    assert.equal((await fetch(`${app.baseUrl}/api/report`, { method: 'POST', headers, body: JSON.stringify(payload) })).status, 202);
   } finally { await app.close(); }
 });
 
@@ -53,30 +54,47 @@ test('hub từ chối tài khoản Claude thứ hai', async () => {
   } finally { await app.close(); }
 });
 
-test('API quota cần admin key và từ chối tổng khác 100', async () => {
+test('API quota từ chối tổng khác 100', async () => {
   const app = await testServer();
   try {
     await register(app.baseUrl);
-    const call = (key: string, quota: number) => fetch(`${app.baseUrl}/api/quota`, {
-      method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ alice: quota }),
+    const call = (quota: number) => fetch(`${app.baseUrl}/api/quota`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ alice: quota }),
     });
-    assert.equal((await call('sai', 100)).status, 401);
-    assert.equal((await call('admin-test-value', 90)).status, 422);
-    assert.equal((await call('admin-test-value', 100)).status, 200);
+    assert.equal((await call(90)).status, 422);
+    assert.equal((await call(100)).status, 200);
   } finally { await app.close(); }
 });
 
-test('API lịch reset cần admin key và agent đọc được lịch', async () => {
+test('API lịch reset lưu lịch và agent đọc được lịch', async () => {
   const app = await testServer();
   try {
     const registered = await register(app.baseUrl);
     const save = await fetch(`${app.baseUrl}/api/reset-schedule`, {
-      method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-key': TEST_CONFIG.adminKey },
+      method: 'PUT', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ dayOfWeek: 5, time: '09:15' }),
     });
     assert.equal(save.status, 200);
     const settings = await fetch(`${app.baseUrl}/api/agent-settings`, { headers: { authorization: `Bearer ${registered.body.machineToken}` } });
     assert.equal(settings.status, 200);
     assert.deepEqual(await settings.json(), { resetSchedule: { dayOfWeek: 5, time: '09:15', timezone: 'Asia/Ho_Chi_Minh' } });
+  } finally { await app.close(); }
+});
+
+test('script cài agent hỗ trợ Ubuntu và macOS mà không chứa secret', async () => {
+  const app = await testServer();
+  try {
+    for (const platform of ['ubuntu', 'macos']) {
+      const response = await fetch(`${app.baseUrl}/install/${platform}.sh`);
+      const script = await response.text();
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get('content-type') ?? '', /text\/plain/);
+      assert.match(script, /claude-hub-agent/);
+      assert.match(script, /register --hub/);
+      assert.match(script, /install-hook/);
+      assert.doesNotMatch(script, /OnUnitActiveSec|StartInterval/);
+      assert.doesNotMatch(script, /enroll-test-value/);
+      assert.equal(spawnSync('bash', ['-n'], { input: script }).status, 0);
+    }
   } finally { await app.close(); }
 });

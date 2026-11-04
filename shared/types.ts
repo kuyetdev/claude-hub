@@ -34,6 +34,9 @@ export interface MachineState {
   lastSeenMs: number;
   agentVersion: string;
   offline: boolean;
+  weightedTokens: number;
+  usedPercent: number;
+  observedSharePercent: number;
 }
 
 export interface UserState {

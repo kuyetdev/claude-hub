@@ -19,6 +19,8 @@ test('trọng số và phân bổ mức dùng theo bảng giá trị', () => {
     assert.equal(state.users[0].usedPercent, 45);
     assert.equal(state.users[1].usedPercent, 15);
     assert.equal(state.users[0].quotaRatioPercent, 75);
+    assert.equal(state.users[0].machines[0].usedPercent, 45);
+    assert.equal(state.users[1].machines[0].observedSharePercent, 25);
   } finally { db.close(); }
 });
 

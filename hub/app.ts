@@ -9,9 +9,9 @@ import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
 import { computeState, updateQuotas } from './usage.ts';
 import { getResetSchedule, saveResetSchedule } from './schedule.ts';
+import { createInstallScript } from './install.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
-const REPORT_INTERVAL_MS = 30_000;
 
 export type AlertCheck = (weekKey: string) => Promise<void>;
 
@@ -33,6 +33,18 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
     'content-length': Buffer.byteLength(body),
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
+  });
+  response.end(body);
+}
+
+function sendText(response: ServerResponse, status: number, value: string, contentType = 'text/plain; charset=utf-8'): void {
+  const body = redact(value);
+  response.writeHead(status, {
+    'content-type': contentType,
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'content-disposition': 'inline',
   });
   response.end(body);
 }
@@ -100,8 +112,6 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
   const weekKey = normalizeWeekKey(report.weekResetsAt);
   const existingAccount = db.prepare("SELECT value FROM settings WHERE key = 'accountUuid'").get() as { value: string } | undefined;
   if (existingAccount && existingAccount.value !== report.accountUuid) throw new Error('ACCOUNT_CONFLICT');
-  const previous = db.prepare('SELECT received_ms AS receivedMs FROM reports WHERE machine_id = ?').get(report.machineId) as { receivedMs: number } | undefined;
-  if (previous && now - previous.receivedMs < REPORT_INTERVAL_MS) throw new Error('RATE_LIMITED');
   db.exec('BEGIN IMMEDIATE');
   try {
     if (!existingAccount) db.prepare("INSERT INTO settings(key, value) VALUES ('accountUuid', ?)").run(report.accountUuid);
@@ -171,21 +181,24 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         if (!authorizeMachine(db, request)) return sendJson(response, 401, { error: 'Token máy không hợp lệ.' });
         return sendJson(response, 200, { resetSchedule: getResetSchedule(db) });
       }
+      if (request.method === 'GET' && url.pathname === '/install/ubuntu.sh') {
+        return sendText(response, 200, createInstallScript('ubuntu', config));
+      }
+      if (request.method === 'GET' && url.pathname === '/install/macos.sh') {
+        return sendText(response, 200, createInstallScript('macos', config));
+      }
       if (request.method === 'GET' && url.pathname === '/api/state') {
         return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now()));
       }
       if (request.method === 'PUT' && url.pathname === '/api/quota') {
-        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
         updateQuotas(db, await readJson(request));
         return sendJson(response, 200, { ok: true });
       }
       if (request.method === 'PUT' && url.pathname === '/api/reset-schedule') {
-        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
         return sendJson(response, 200, { resetSchedule: saveResetSchedule(db, await readJson(request), config.timezone) });
       }
       const machineMatch = request.method === 'DELETE' ? url.pathname.match(/^\/api\/machines\/([^/]+)$/) : null;
       if (machineMatch) {
-        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
         const result = db.prepare('DELETE FROM machines WHERE machine_id = ?').run(decodeURIComponent(machineMatch[1]));
         if (result.changes === 0) return sendJson(response, 404, { error: 'Không tìm thấy máy.' });
         return sendJson(response, 200, { ok: true });
@@ -197,7 +210,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
       const code = error instanceof Error ? error.message : '';
       if (code === 'BODY_TOO_LARGE') return sendJson(response, 413, { error: 'Dữ liệu vượt quá 64 KB.' });
       if (code === 'ACCOUNT_CONFLICT') return sendJson(response, 409, { error: 'Báo cáo thuộc tài khoản Claude khác.' });
-      if (code === 'RATE_LIMITED') return sendJson(response, 429, { error: 'Báo cáo quá thường xuyên, hãy thử lại sau.' });
       if (['QUOTA_TOTAL', 'QUOTA_USERS_MISMATCH', 'INVALID_QUOTA'].includes(code)) {
         const message = code === 'QUOTA_TOTAL' ? 'Tổng quota phải bằng 100%.' : code === 'QUOTA_USERS_MISMATCH' ? 'Danh sách người không khớp.' : 'Quota không hợp lệ.';
         return sendJson(response, 422, { error: message });
