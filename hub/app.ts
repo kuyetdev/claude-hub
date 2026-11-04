@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -8,7 +8,6 @@ import type { ReportPayload } from '../shared/types.ts';
 import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
 import { computeState, updateQuotas } from './usage.ts';
-import { getResetSchedule, saveResetSchedule } from './schedule.ts';
 import { createInstallScript } from './install.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -17,13 +16,6 @@ export type AlertCheck = (weekKey: string) => Promise<void>;
 
 function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
-}
-
-function safeEqual(actual: string | undefined, expected: string): boolean {
-  if (!actual) return false;
-  const left = Buffer.from(actual);
-  const right = Buffer.from(expected);
-  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 function sendJson(response: ServerResponse, status: number, value: unknown): void {
@@ -163,7 +155,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
     try {
       if (request.method === 'POST' && url.pathname === '/api/register') {
-        if (!safeEqual(request.headers['x-enroll-key'] as string | undefined, config.enrollKey)) return sendJson(response, 401, { error: 'Khóa đăng ký không đúng.' });
         const body = await readJson(request) as Record<string, unknown>;
         return sendJson(response, 201, { machineToken: registerMachine(db, body) });
       }
@@ -177,10 +168,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         void options.checkAlerts?.(weekKey).catch((error: unknown) => console.error(redact(`Không thể kiểm tra cảnh báo: ${error instanceof Error ? error.message : String(error)}`)));
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/api/agent-settings') {
-        if (!authorizeMachine(db, request)) return sendJson(response, 401, { error: 'Token máy không hợp lệ.' });
-        return sendJson(response, 200, { resetSchedule: getResetSchedule(db) });
-      }
       if (request.method === 'GET' && url.pathname === '/install/ubuntu.sh') {
         return sendText(response, 200, createInstallScript('ubuntu', config));
       }
@@ -193,9 +180,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
       if (request.method === 'PUT' && url.pathname === '/api/quota') {
         updateQuotas(db, await readJson(request));
         return sendJson(response, 200, { ok: true });
-      }
-      if (request.method === 'PUT' && url.pathname === '/api/reset-schedule') {
-        return sendJson(response, 200, { resetSchedule: saveResetSchedule(db, await readJson(request), config.timezone) });
       }
       const machineMatch = request.method === 'DELETE' ? url.pathname.match(/^\/api\/machines\/([^/]+)$/) : null;
       if (machineMatch) {
@@ -214,7 +198,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         const message = code === 'QUOTA_TOTAL' ? 'Tổng quota phải bằng 100%.' : code === 'QUOTA_USERS_MISMATCH' ? 'Danh sách người không khớp.' : 'Quota không hợp lệ.';
         return sendJson(response, 422, { error: message });
       }
-      if (code === 'INVALID_SCHEDULE') return sendJson(response, 422, { error: 'Lịch reset không hợp lệ.' });
       if (['INVALID_JSON', 'EMPTY_BODY', 'INVALID_REGISTER'].includes(code)) return sendJson(response, 400, { error: 'Dữ liệu không hợp lệ.' });
       console.error(redact(`Lỗi hub: ${error instanceof Error ? error.message : String(error)}`));
       return sendJson(response, 500, { error: 'Hub gặp lỗi nội bộ.' });

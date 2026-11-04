@@ -8,8 +8,6 @@ import { stdin, stdout } from 'node:process';
 import { spawn } from 'node:child_process';
 import { emptyState, scanClaudeHome, type AgentState } from './scan.ts';
 import { USERNAME_RE } from '../hub/validate.ts';
-import { nextWeeklyReset } from '../hub/schedule.ts';
-import type { ResetSchedule } from '../shared/types.ts';
 import { installClaudeHook } from './hook.ts';
 
 const VERSION = '0.1.0';
@@ -39,26 +37,6 @@ async function question(label: string): Promise<string> {
   try { return (await rl.question(label)).trim(); } finally { rl.close(); }
 }
 
-async function secretQuestion(label: string): Promise<string> {
-  if (!stdin.isTTY || !stdin.setRawMode) throw new Error('Cần chạy trong terminal tương tác để nhập khóa đăng ký an toàn.');
-  stdout.write(label);
-  stdin.setRawMode(true);
-  stdin.resume();
-  let value = '';
-  try {
-    for await (const chunk of stdin) {
-      const text = String(chunk);
-      for (const character of text) {
-        if (character === '\u0003') throw new Error('Đã hủy.');
-        if (character === '\r' || character === '\n') { stdout.write('\n'); return value; }
-        if (character === '\u007f') { value = value.slice(0, -1); continue; }
-        if (character >= ' ') value += character;
-      }
-    }
-  } finally { stdin.setRawMode(false); stdin.pause(); }
-  return value;
-}
-
 function normalizeHub(raw: string): string {
   const url = new URL(raw);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Địa chỉ hub phải là URL HTTP(S) không chứa tài khoản hoặc mật khẩu.');
@@ -79,11 +57,10 @@ async function register(args: string[]): Promise<void> {
     username = (await question('Username (2–32 ký tự: a-z, 0-9, - hoặc _): ')).toLowerCase();
     if (!USERNAME_RE.test(username)) console.info('Username không hợp lệ, vui lòng nhập lại.');
   }
-  const enrollKey = await secretQuestion('HUB_ENROLL_KEY: ');
   const machineId = existing?.machineId ?? randomUUID();
   const response = await fetch(`${hub}/api/register`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-enroll-key': enrollKey },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ username, machineId, hostname: hostname() }),
     signal: AbortSignal.timeout(10_000),
   });
@@ -94,8 +71,8 @@ async function register(args: string[]): Promise<void> {
   console.info(`Đã đăng ký máy cho ${username}.`);
 }
 
-export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), schedule: ResetSchedule | null = null, rateLimitCachePath = RATE_LIMIT_PATH) {
-  const scanned = await scanClaudeHome(claudeHome, state, now, schedule ? nextWeeklyReset(now, schedule) : undefined, rateLimitCachePath);
+export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), rateLimitCachePath = RATE_LIMIT_PATH) {
+  const scanned = await scanClaudeHome(claudeHome, state, now, undefined, rateLimitCachePath);
   return {
     payload: { machineId: config.machineId, ...scanned.payload, agentVersion: VERSION, sentAtMs: now },
     state: scanned.state,
@@ -107,12 +84,7 @@ async function report(): Promise<void> {
   if (!config) throw new Error('Máy chưa đăng ký. Hãy chạy lệnh register trước.');
   const state = await readJson<AgentState>(STATE_PATH) ?? emptyState();
   const now = Date.now();
-  const settingsResponse = await fetch(`${config.hub}/api/agent-settings`, {
-    headers: { authorization: `Bearer ${config.machineToken}` }, signal: AbortSignal.timeout(10_000),
-  });
-  if (!settingsResponse.ok) throw new Error(`Không lấy được lịch reset từ hub (HTTP ${settingsResponse.status}).`);
-  const settings = await settingsResponse.json() as { resetSchedule: ResetSchedule | null };
-  const result = await buildReport(config, state, join(homedir(), '.claude'), now, settings.resetSchedule);
+  const result = await buildReport(config, state, join(homedir(), '.claude'), now);
   const response = await fetch(`${config.hub}/api/report`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.machineToken}` },
     body: JSON.stringify(result.payload), signal: AbortSignal.timeout(10_000),

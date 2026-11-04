@@ -1,6 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { HubState, TokenTotals, UserState, Utilization, WeightConfig } from '../shared/types.ts';
-import { getResetSchedule, nextWeeklyReset } from './schedule.ts';
 
 interface ReportRow {
   username: string;
@@ -29,9 +28,8 @@ function parseJson<T>(value: string | null, fallback: T): T {
 }
 
 export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now()): HubState {
-  const schedule = getResetSchedule(db);
   const week = db.prepare('SELECT week_key AS weekKey FROM reports ORDER BY week_key DESC LIMIT 1').get() as { weekKey: string } | undefined;
-  const weekKey = schedule ? nextWeeklyReset(now, schedule) : (week?.weekKey ?? null);
+  const weekKey = week?.weekKey ?? null;
   let latest: Utilization | undefined;
   const utilizationRows = db.prepare('SELECT utilization_json AS utilizationJson FROM reports').all() as unknown as Array<{ utilizationJson: string }>;
   for (const row of utilizationRows) {
@@ -80,8 +78,7 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   return {
     weekKey,
     resetAt: weekKey,
-    accountResetAt: latest?.accountResetsAt ?? (!schedule ? weekKey : null),
-    resetSchedule: schedule,
+    accountResetAt: latest?.accountResetsAt ?? weekKey,
     accountPercent,
     fetchedAtMs: latest?.fetchedAtMs ?? null,
     stale: !latest || now - latest.fetchedAtMs > 30 * 60_000,

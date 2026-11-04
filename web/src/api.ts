@@ -20,9 +20,3 @@ export function saveQuotas(quotas: Record<string, number>): Promise<{ ok: true }
 export function removeMachine(machineId: string): Promise<{ ok: true }> {
   return request(`/api/machines/${encodeURIComponent(machineId)}`, { method: 'DELETE' });
 }
-
-export function saveResetSchedule(dayOfWeek: number, time: string): Promise<{ resetSchedule: unknown }> {
-  return request('/api/reset-schedule', {
-    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dayOfWeek, time }),
-  });
-}

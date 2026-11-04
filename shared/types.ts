@@ -12,12 +12,6 @@ export interface Utilization {
   accountResetsAt?: string;
 }
 
-export interface ResetSchedule {
-  dayOfWeek: number;
-  time: string;
-  timezone: string;
-}
-
 export interface ReportPayload {
   machineId: string;
   accountUuid: string;
@@ -55,7 +49,6 @@ export interface HubState {
   stale: boolean;
   resetAt: string | null;
   accountResetAt: string | null;
-  resetSchedule: ResetSchedule | null;
   quotaTotal: number;
   quotaValid: boolean;
   telegramConfigured: boolean;

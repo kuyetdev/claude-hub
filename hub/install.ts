@@ -62,7 +62,7 @@ WRAPPER
 chmod 700 "$BIN_DIR/claude-hub-agent"
 
 echo
-echo "Đăng ký máy với Claude Hub. Enroll key sẽ được nhập ẩn."
+echo "Đăng ký máy với Claude Hub."
 "$BIN_DIR/claude-hub-agent" register --hub "$HUB_URL"
 
 echo

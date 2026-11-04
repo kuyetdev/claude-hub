@@ -3,11 +3,9 @@ import { test } from 'node:test';
 import { register, testServer } from './helpers.ts';
 import { spawnSync } from 'node:child_process';
 
-test('đăng ký cần enroll key và thu hồi token cũ khi đăng ký lại', async () => {
+test('đăng ký không cần khóa và thu hồi token cũ khi đăng ký lại', async () => {
   const app = await testServer();
   try {
-    const denied = await fetch(`${app.baseUrl}/api/register`, { method: 'POST', body: '{}' });
-    assert.equal(denied.status, 401);
     const first = await register(app.baseUrl);
     const second = await register(app.baseUrl);
     assert.equal(first.response.status, 201);
@@ -66,21 +64,6 @@ test('API quota từ chối tổng khác 100', async () => {
   } finally { await app.close(); }
 });
 
-test('API lịch reset lưu lịch và agent đọc được lịch', async () => {
-  const app = await testServer();
-  try {
-    const registered = await register(app.baseUrl);
-    const save = await fetch(`${app.baseUrl}/api/reset-schedule`, {
-      method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ dayOfWeek: 5, time: '09:15' }),
-    });
-    assert.equal(save.status, 200);
-    const settings = await fetch(`${app.baseUrl}/api/agent-settings`, { headers: { authorization: `Bearer ${registered.body.machineToken}` } });
-    assert.equal(settings.status, 200);
-    assert.deepEqual(await settings.json(), { resetSchedule: { dayOfWeek: 5, time: '09:15', timezone: 'Asia/Ho_Chi_Minh' } });
-  } finally { await app.close(); }
-});
-
 test('script cài agent hỗ trợ Ubuntu và macOS mà không chứa secret', async () => {
   const app = await testServer();
   try {
@@ -93,7 +76,7 @@ test('script cài agent hỗ trợ Ubuntu và macOS mà không chứa secret', a
       assert.match(script, /register --hub/);
       assert.match(script, /install-hook/);
       assert.doesNotMatch(script, /OnUnitActiveSec|StartInterval/);
-      assert.doesNotMatch(script, /enroll-test-value/);
+      assert.doesNotMatch(script, /HUB_ENROLL_KEY|x-enroll-key/);
       assert.equal(spawnSync('bash', ['-n'], { input: script }).status, 0);
     }
   } finally { await app.close(); }

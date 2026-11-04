@@ -14,15 +14,12 @@ export interface HubConfig {
   port: number;
   dbPath: string;
   timezone: string;
-  enrollKey: string;
   telegramToken?: string;
   telegramChatId?: string;
   weights: WeightConfig;
 }
 
 export function loadConfig(env = process.env): HubConfig {
-  const enrollKey = env.HUB_ENROLL_KEY ?? '';
-  if (!enrollKey) throw new Error('Thiếu biến môi trường HUB_ENROLL_KEY.');
   const port = Number(env.HUB_PORT ?? 4318);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('HUB_PORT không hợp lệ.');
   const timezone = env.HUB_TZ ?? 'Asia/Ho_Chi_Minh';
@@ -32,7 +29,6 @@ export function loadConfig(env = process.env): HubConfig {
     port,
     dbPath: resolve(env.HUB_DB_PATH ?? './data/hub.db'),
     timezone,
-    enrollKey,
     telegramToken: env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: env.TELEGRAM_CHAT_ID || undefined,
     weights: {
