@@ -37,6 +37,8 @@ Mở `http://100.x.y.z:4318` từ một máy trong tailnet. `HUB_HOST` nên là 
 
 Repo có sẵn unit systemd user tại `deploy/claude-hub.service`. Unit giả định source được đặt ở `~/apps/claude-hub` và biến môi trường nằm tại `~/.config/claude-hub/env` với quyền `0600`.
 
+Nếu server không cài Node, có thể build image bằng `Dockerfile` và chạy `deploy/compose.yaml`. Compose dùng host network để hub bind trực tiếp IP Tailscale, lưu SQLite trong thư mục `data/` cạnh file Compose và tự khởi động lại sau reboot.
+
 ### Biến môi trường
 
 | Biến | Bắt buộc | Mặc định | Ý nghĩa |
