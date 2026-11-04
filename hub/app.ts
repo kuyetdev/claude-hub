@@ -7,6 +7,7 @@ import type { HubConfig } from './config.ts';
 import type { ReportPayload } from '../shared/types.ts';
 import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
+import { computeState, updateQuotas } from './usage.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
 const REPORT_INTERVAL_MS = 30_000;
@@ -123,20 +124,6 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
   return weekKey;
 }
 
-function basicState(db: DatabaseSync, config: HubConfig): unknown {
-  const users = db.prepare(`
-    SELECT u.username, u.quota_percent AS quotaPercent, m.machine_id AS machineId,
-           m.hostname, m.last_seen_ms AS lastSeenMs, m.agent_version AS agentVersion
-    FROM users u LEFT JOIN machines m ON m.username = u.username
-    ORDER BY u.username, m.hostname
-  `).all() as Array<Record<string, unknown>>;
-  return {
-    users,
-    quotaTotal: (db.prepare('SELECT COALESCE(SUM(quota_percent), 0) AS total FROM users').get() as { total: number }).total,
-    telegramConfigured: Boolean(config.telegramToken && config.telegramChatId),
-  };
-}
-
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.json': 'application/json; charset=utf-8',
@@ -179,7 +166,21 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         void options.checkAlerts?.(weekKey).catch((error: unknown) => console.error(redact(`Không thể kiểm tra cảnh báo: ${error instanceof Error ? error.message : String(error)}`)));
         return;
       }
-      if (request.method === 'GET' && url.pathname === '/api/state') return sendJson(response, 200, basicState(db, config));
+      if (request.method === 'GET' && url.pathname === '/api/state') {
+        return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now()));
+      }
+      if (request.method === 'PUT' && url.pathname === '/api/quota') {
+        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
+        updateQuotas(db, await readJson(request));
+        return sendJson(response, 200, { ok: true });
+      }
+      const machineMatch = request.method === 'DELETE' ? url.pathname.match(/^\/api\/machines\/([^/]+)$/) : null;
+      if (machineMatch) {
+        if (!safeEqual(request.headers['x-admin-key'] as string | undefined, config.adminKey)) return sendJson(response, 401, { error: 'Khóa quản trị không đúng.' });
+        const result = db.prepare('DELETE FROM machines WHERE machine_id = ?').run(decodeURIComponent(machineMatch[1]));
+        if (result.changes === 0) return sendJson(response, 404, { error: 'Không tìm thấy máy.' });
+        return sendJson(response, 200, { ok: true });
+      }
       if (url.pathname.startsWith('/api/')) return sendJson(response, 404, { error: 'API không tồn tại.' });
       if (request.method !== 'GET' && request.method !== 'HEAD') return sendJson(response, 405, { error: 'Phương thức không được hỗ trợ.' });
       return serveStatic(response, distDir, url.pathname);
@@ -188,6 +189,10 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
       if (code === 'BODY_TOO_LARGE') return sendJson(response, 413, { error: 'Dữ liệu vượt quá 64 KB.' });
       if (code === 'ACCOUNT_CONFLICT') return sendJson(response, 409, { error: 'Báo cáo thuộc tài khoản Claude khác.' });
       if (code === 'RATE_LIMITED') return sendJson(response, 429, { error: 'Báo cáo quá thường xuyên, hãy thử lại sau.' });
+      if (['QUOTA_TOTAL', 'QUOTA_USERS_MISMATCH', 'INVALID_QUOTA'].includes(code)) {
+        const message = code === 'QUOTA_TOTAL' ? 'Tổng quota phải bằng 100%.' : code === 'QUOTA_USERS_MISMATCH' ? 'Danh sách người không khớp.' : 'Quota không hợp lệ.';
+        return sendJson(response, 422, { error: message });
+      }
       if (['INVALID_JSON', 'EMPTY_BODY', 'INVALID_REGISTER'].includes(code)) return sendJson(response, 400, { error: 'Dữ liệu không hợp lệ.' });
       console.error(redact(`Lỗi hub: ${error instanceof Error ? error.message : String(error)}`));
       return sendJson(response, 500, { error: 'Hub gặp lỗi nội bộ.' });
