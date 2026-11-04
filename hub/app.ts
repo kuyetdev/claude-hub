@@ -9,7 +9,6 @@ import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
 import { computeState, updateQuotas } from './usage.ts';
 import { createInstallScript } from './install.ts';
-import { createReadStream } from 'node:fs';
 
 const MAX_BODY_BYTES = 64 * 1024;
 
@@ -171,13 +170,6 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
       }
       if (request.method === 'GET' && url.pathname === '/install/ubuntu.sh') {
         return sendText(response, 200, createInstallScript('ubuntu', config));
-      }
-      if (request.method === 'GET' && url.pathname === '/install/agent.tar.gz') {
-        const archivePath = join(process.cwd(), 'claude-hub-agent.tar.gz');
-        if (!existsSync(archivePath)) return sendJson(response, 404, { error: 'Gói cài agent chưa có.' });
-        response.writeHead(200, { 'content-type': 'application/gzip', 'cache-control': 'no-store', 'content-disposition': 'attachment; filename="claude-hub-agent.tar.gz"' });
-        createReadStream(archivePath).pipe(response);
-        return;
       }
       if (request.method === 'GET' && url.pathname === '/install/macos.sh') {
         return sendText(response, 200, createInstallScript('macos', config));
