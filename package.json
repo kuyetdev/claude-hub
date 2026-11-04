@@ -1,0 +1,28 @@
+{
+  "name": "claude-hub",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Theo dõi hạn mức Claude dùng chung trên nhiều máy và cảnh báo Telegram.",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 & node --watch hub/index.ts",
+    "build": "tsc --noEmit && vite build",
+    "start": "vite build && node hub/index.ts",
+    "agent": "node agent/cli.ts",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "typescript": "5.6.3",
+    "vite": "5.4.11"
+  }
+}

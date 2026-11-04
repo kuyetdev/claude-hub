@@ -1,0 +1,49 @@
+import { resolve } from 'node:path';
+import type { WeightConfig } from '../shared/types.ts';
+
+function positiveNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) throw new Error(`${name} phải là số không âm.`);
+  return value;
+}
+
+export interface HubConfig {
+  host: string;
+  port: number;
+  dbPath: string;
+  timezone: string;
+  enrollKey: string;
+  adminKey: string;
+  telegramToken?: string;
+  telegramChatId?: string;
+  weights: WeightConfig;
+}
+
+export function loadConfig(env = process.env): HubConfig {
+  const enrollKey = env.HUB_ENROLL_KEY ?? '';
+  const adminKey = env.HUB_ADMIN_KEY ?? '';
+  if (!enrollKey) throw new Error('Thiếu biến môi trường HUB_ENROLL_KEY.');
+  if (!adminKey) throw new Error('Thiếu biến môi trường HUB_ADMIN_KEY.');
+  const port = Number(env.HUB_PORT ?? 4318);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('HUB_PORT không hợp lệ.');
+  const timezone = env.HUB_TZ ?? 'Asia/Ho_Chi_Minh';
+  try { new Intl.DateTimeFormat('vi-VN', { timeZone: timezone }); } catch { throw new Error('HUB_TZ không hợp lệ.'); }
+  return {
+    host: env.HUB_HOST ?? '127.0.0.1',
+    port,
+    dbPath: resolve(env.HUB_DB_PATH ?? './data/hub.db'),
+    timezone,
+    enrollKey,
+    adminKey,
+    telegramToken: env.TELEGRAM_BOT_TOKEN || undefined,
+    telegramChatId: env.TELEGRAM_CHAT_ID || undefined,
+    weights: {
+      input: positiveNumber('HUB_WEIGHT_INPUT', 1),
+      output: positiveNumber('HUB_WEIGHT_OUTPUT', 5),
+      cacheCreation: positiveNumber('HUB_WEIGHT_CACHE_CREATION', 1.25),
+      cacheRead: positiveNumber('HUB_WEIGHT_CACHE_READ', 0.1),
+    },
+  };
+}
