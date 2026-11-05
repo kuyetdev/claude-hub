@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, appendFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, appendFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -47,6 +47,36 @@ test('quét JSONL khử trùng, đọc tăng dần và không đưa dữ liệu 
   assert.equal(serialized.includes('/duong/dan/bi-mat'), false);
   assert.equal(serialized.includes('khong-duoc-gui'), false);
   assert.equal(serialized.includes('token-bi-mat'), false);
+});
+
+test('quét lại từ đầu khi transcript bị thay nội dung nhưng giữ nguyên đường dẫn', async () => {
+  const fixture = await fakeClaudeHome();
+  await writeFile(fixture.file, `${line('old-1', 'r-old-1', 10)}\n${line('old-2', 'r-old-2', 7)}\n`);
+  const first = await scanClaudeHome(fixture.claude, emptyState());
+  const before = await stat(fixture.file);
+
+  // Simulate a transcript rewrite/truncation in place, followed by enough new bytes to
+  // exceed the previous cursor before the next Stop hook gets a chance to scan it.
+  await writeFile(fixture.file, `${line('new-1', 'r-new-1', 5)}\n${line('new-2', 'r-new-2', 8, { padding: 'x'.repeat(1000) })}\n`);
+  const after = await stat(fixture.file);
+  assert.equal(after.ino, before.ino);
+  assert.ok(after.size >= before.size);
+
+  const second = await scanClaudeHome(fixture.claude, first.state);
+  assert.equal(second.payload.tokensByModel['claude-test'].input, 30);
+});
+
+test('giữ nguyên offset chính xác khi JSONL kết thúc giữa một ký tự UTF-8', async () => {
+  const fixture = await fakeClaudeHome();
+  const nextLine = Buffer.from(line('m2', 'r2', 7));
+  const multibyteChar = Buffer.from('ệ');
+  const splitAt = nextLine.indexOf(multibyteChar) + 1;
+  await writeFile(fixture.file, Buffer.concat([Buffer.from(`${line('m1', 'r1', 10)}\n`), nextLine.subarray(0, splitAt)]));
+  const first = await scanClaudeHome(fixture.claude, emptyState());
+  assert.equal(first.payload.tokensByModel['claude-test'].input, 10);
+  await appendFile(fixture.file, Buffer.concat([nextLine.subarray(splitAt), Buffer.from('\n')]));
+  const second = await scanClaudeHome(fixture.claude, first.state);
+  assert.equal(second.payload.tokensByModel['claude-test'].input, 17);
 });
 
 test('sang tuần mới xóa tổng cũ', async () => {

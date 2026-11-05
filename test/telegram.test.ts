@@ -10,6 +10,9 @@ function fixture(percent = 82) {
   const db = openDatabase(':memory:');
   db.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('alice', 20, 1, 1);
   db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m1', 'alice', 'may-a', 'hash', 1, '0.1.0');
+  db.prepare('INSERT INTO accounts VALUES (?, NULL, ?)').run('account', 1);
+  db.prepare('INSERT INTO account_machines VALUES (?, ?, 0)').run('account', 'm1');
+  db.prepare('INSERT INTO account_users VALUES (?, ?, 20, 1)').run('account', 'alice');
   db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run(
     'm1', WEEK, JSON.stringify({ x: { input: 1, output: 0, cacheCreation: 0, cacheRead: 0 } }),
     JSON.stringify({ weeklyPercent: percent, fetchedAtMs: Date.parse('2026-11-04T10:00:00Z'), fiveHourPercent: null }), 'account', 1,

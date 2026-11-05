@@ -77,6 +77,18 @@ svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width:
 .user-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .user-card, .admin-panel, .empty-card, .loading-card, .install-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .user-card { padding: 20px; min-width: 0; }
+.history-chart { min-height: 230px; padding: 10px 14px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+.history-empty { min-height: 210px; display: grid; place-items: center; margin: 0; color: var(--muted); text-align: center; }
+.history-note { margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
+.data-policy { margin-top: 26px; padding: 0; overflow: hidden; }
+.data-policy > summary { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; cursor: pointer; list-style-position: inside; }
+.data-policy > summary > span { display: inline-flex; flex-direction: column; gap: 3px; vertical-align: middle; }
+.data-policy > summary .eyebrow { margin: 0; }
+.data-policy[open] > summary { border-bottom: 1px solid var(--border); }
+.append-only-setting { display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px; cursor: pointer; }
+.append-only-setting input { width: 18px; height: 18px; flex: 0 0 18px; margin: 2px 0 0; accent-color: var(--accent); }
+.append-only-setting span, .append-only-setting small { display: block; }
+.append-only-setting small { margin-top: 4px; color: var(--muted); line-height: 1.5; }
 .user-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .user-head h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 .usage-value { margin: 3px 0 15px; font-size: 25px; font-weight: 680; letter-spacing: -.03em; }

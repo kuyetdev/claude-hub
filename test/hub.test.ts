@@ -32,23 +32,29 @@ test('báo cáo kiểm tra schema, token máy và nhận mỗi lượt chat', as
   } finally { await app.close(); }
 });
 
-test('hub từ chối tài khoản Claude thứ hai', async () => {
+test('một máy theo dõi được nhiều tài khoản Claude và mốc mới lấy lịch sử trong kỳ', async () => {
   let clock = 1_000_000;
   const app = await testServer({ now: () => clock });
   try {
     const first = await register(app.baseUrl, 'alice', '7f19d0d8-8c54-4ee3-a463-8cc45f632b14');
-    const second = await register(app.baseUrl, 'bob', '84ce552b-2ac6-4d12-b552-e67f09f64612');
-    const makePayload = (machineId: string, accountUuid: string) => ({
-      machineId, accountUuid, weekResetsAt: '2026-11-05T17:00:00Z',
+    const makePayload = (accountUuid: string, input = 1) => ({
+      machineId: '7f19d0d8-8c54-4ee3-a463-8cc45f632b14', accountUuid, weekResetsAt: '2026-11-05T17:00:00Z',
       utilization: { weeklyPercent: 10, fetchedAtMs: clock, fiveHourPercent: null },
-      tokensByModel: {}, agentVersion: '0.1.0', sentAtMs: clock,
+      tokensByModel: { 'claude-test': { input, output: 0, cacheCreation: 0, cacheRead: 0 } }, agentVersion: '0.1.0', sentAtMs: clock,
     });
-    const post = (token: string, payload: unknown) => fetch(`${app.baseUrl}/api/report`, {
-      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(payload),
+    const post = (payload: unknown) => fetch(`${app.baseUrl}/api/report`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${first.body.machineToken}` }, body: JSON.stringify(payload),
     });
-    assert.equal((await post(first.body.machineToken, makePayload('7f19d0d8-8c54-4ee3-a463-8cc45f632b14', 'account-one'))).status, 202);
+    assert.equal((await post(makePayload('account-one'))).status, 202);
+    const tracking = await fetch(`${app.baseUrl}/api/account-tracking`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${first.body.machineToken}` },
+      body: JSON.stringify({ accountUuid: 'account-two' }),
+    });
+    assert.equal(tracking.status, 200);
+    assert.equal((await tracking.json() as { trackingSinceMs: number }).trackingSinceMs, 0);
     clock += 31_000;
-    assert.equal((await post(second.body.machineToken, makePayload('84ce552b-2ac6-4d12-b552-e67f09f64612', 'account-two'))).status, 409);
+    assert.equal((await post(makePayload('account-two', 5))).status, 202);
+    assert.equal((app.db.prepare('SELECT COUNT(*) AS count FROM accounts').get() as { count: number }).count, 2);
   } finally { await app.close(); }
 });
 
@@ -61,6 +67,46 @@ test('API quota từ chối tổng khác 100', async () => {
     });
     assert.equal((await call(90)).status, 422);
     assert.equal((await call(100)).status, 200);
+  } finally { await app.close(); }
+});
+
+test('chế độ chỉ cộng giữ số đã lưu, cho phép tắt và ghi lịch sử theo từng report', async () => {
+  let clock = Date.parse('2026-11-05T16:00:00Z');
+  const app = await testServer({ now: () => clock });
+  try {
+    const { body } = await register(app.baseUrl);
+    const payload = (input: number) => ({
+      machineId: '7f19d0d8-8c54-4ee3-a463-8cc45f632b14', accountUuid: 'account-one',
+      weekResetsAt: '2026-11-05T17:00:00Z',
+      utilization: { weeklyPercent: 50, fetchedAtMs: clock, fiveHourPercent: null },
+      tokensByModel: { 'claude-test': { input, output: 0, cacheCreation: 0, cacheRead: 0 } },
+      agentVersion: '0.1.0', sentAtMs: clock,
+    });
+    const post = (input: number) => fetch(`${app.baseUrl}/api/report`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${body.machineToken}` }, body: JSON.stringify(payload(input)),
+    });
+    await post(10);
+    const olderMachine = await register(app.baseUrl, 'bob', '84ce552b-2ac6-4d12-b552-e67f09f64612');
+    const stalePayload = { ...payload(500), machineId: '84ce552b-2ac6-4d12-b552-e67f09f64612', weekResetsAt: '2026-10-29T17:00:00Z' };
+    await fetch(`${app.baseUrl}/api/report`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${olderMachine.body.machineToken}` }, body: JSON.stringify(stalePayload),
+    });
+    assert.equal((app.db.prepare('SELECT COUNT(*) AS count FROM reports').get() as { count: number }).count, 1, 'report kỳ cũ không được đưa ngược account về kỳ trước');
+    clock += 61_000;
+    await post(5);
+    let stored = JSON.parse((app.db.prepare('SELECT tokens_json AS tokens FROM reports').get() as { tokens: string }).tokens) as Record<string, { input: number }>;
+    assert.equal(stored['claude-test']!.input, 10, 'mặc định chỉ cộng, không giảm snapshot');
+    const history = await fetch(`${app.baseUrl}/api/history?account=account-one`).then((response) => response.json()) as { points: Array<{ weightedTokensByUser: Record<string, number> }> };
+    assert.equal(history.points.length, 2);
+    assert.equal(history.points[1]!.weightedTokensByUser.alice, 10);
+
+    await fetch(`${app.baseUrl}/api/settings/usage-append-only`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled: false }),
+    });
+    clock += 61_000;
+    await post(5);
+    stored = JSON.parse((app.db.prepare('SELECT tokens_json AS tokens FROM reports').get() as { tokens: string }).tokens);
+    assert.equal(stored['claude-test']!.input, 5, 'tắt chế độ thì report thay thế snapshot');
   } finally { await app.close(); }
 });
 

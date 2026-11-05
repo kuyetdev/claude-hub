@@ -33,6 +33,11 @@ export interface ReportPayload {
   sentAtMs: number;
 }
 
+export interface UsageHistoryPoint {
+  timestamp: number;
+  weightedTokensByUser: Record<string, number>;
+}
+
 export interface MachineState {
   machineId: string;
   hostname: string;
@@ -73,6 +78,7 @@ export interface HubState {
   quotaTotal: number;
   quotaValid: boolean;
   telegramConfigured: boolean;
+  usageAppendOnly: boolean;
   weights: WeightConfig;
   users: UserState[];
 }

@@ -4,6 +4,12 @@ import { openDatabase } from '../hub/db.ts';
 import { computeState, updateQuotas, weightedTokens } from '../hub/usage.ts';
 import { register, testServer, TEST_CONFIG } from './helpers.ts';
 
+function attachAccount(db: ReturnType<typeof openDatabase>, machineId: string, username: string, quota: number, accountUuid = 'a') {
+  db.prepare('INSERT OR IGNORE INTO accounts VALUES (?, NULL, ?)').run(accountUuid, 1);
+  db.prepare('INSERT OR IGNORE INTO account_machines VALUES (?, ?, 0)').run(accountUuid, machineId);
+  db.prepare('INSERT OR IGNORE INTO account_users VALUES (?, ?, ?, 0)').run(accountUuid, username, quota);
+}
+
 test('trọng số và phân bổ mức dùng theo bảng giá trị', () => {
   assert.equal(weightedTokens({ x: { input: 100, output: 10, cacheCreation: 20, cacheRead: 50 } }, TEST_CONFIG.weights), 180);
   const db = openDatabase(':memory:');
@@ -12,6 +18,7 @@ test('trọng số và phân bổ mức dùng theo bảng giá trị', () => {
     db.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('bob', 40, 1, 1);
     db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m1', 'alice', 'a', 'h1', 100, '0.1.0');
     db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m2', 'bob', 'b', 'h2', 100, '0.1.0');
+    attachAccount(db, 'm1', 'alice', 60); attachAccount(db, 'm2', 'bob', 40);
     const utilization = JSON.stringify({ weeklyPercent: 60, fetchedAtMs: 1000, fiveHourPercent: null });
     db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run('m1', '2026-11-05T17:00:00.000Z', JSON.stringify({ x: { input: 3, output: 0, cacheCreation: 0, cacheRead: 0 } }), utilization, 'a', 100);
     db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run('m2', '2026-11-05T17:00:00.000Z', JSON.stringify({ x: { input: 1, output: 0, cacheCreation: 0, cacheRead: 0 } }), utilization, 'a', 100);
@@ -31,6 +38,7 @@ test('báo cáo reset lệch vài giây vẫn cộng chung kỳ token', () => {
     db.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('bob', 50, 0, 1);
     db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m1', 'alice', 'a', 'h1', 100, '0.1.0');
     db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m2', 'bob', 'b', 'h2', 100, '0.1.0');
+    attachAccount(db, 'm1', 'alice', 50); attachAccount(db, 'm2', 'bob', 50);
     const utilization = JSON.stringify({ weeklyPercent: 60, fetchedAtMs: 1000, fiveHourPercent: null });
     const tokens = (input: number) => JSON.stringify({ x: { input, output: 0, cacheCreation: 0, cacheRead: 0 } });
     db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run('m1', '2026-11-05T17:00:00.000Z', tokens(3), utilization, 'a', 100);

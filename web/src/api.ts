@@ -1,4 +1,4 @@
-import type { HubState } from '../../shared/types.ts';
+import type { HubState, UsageHistoryPoint } from '../../shared/types.ts';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
@@ -9,6 +9,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getState(account?: string | null, signal?: AbortSignal): Promise<HubState> {
   return request(`/api/state${account ? `?account=${encodeURIComponent(account)}` : ''}`, { signal });
+}
+
+export function getHistory(account?: string | null, signal?: AbortSignal): Promise<{ points: UsageHistoryPoint[] }> {
+  return request(`/api/history${account ? `?account=${encodeURIComponent(account)}` : ''}`, { signal });
+}
+
+export function setAppendOnlyUsage(enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+  return request('/api/settings/usage-append-only', {
+    method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ enabled }),
+  });
 }
 
 export function saveQuotas(quotas: Record<string, number>, account?: string | null): Promise<{ ok: true }> {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { HubState, UserState } from '../../shared/types.ts';
-import { getState, removeMachine, saveQuotas } from './api.ts';
+import Highcharts from 'highcharts';
+import HighchartsReact from 'highcharts-react-official';
+import type { HubState, UsageHistoryPoint, UserState } from '../../shared/types.ts';
+import { getHistory, getState, removeMachine, saveQuotas, setAppendOnlyUsage } from './api.ts';
 
 const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -142,6 +144,7 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
 
 export function App() {
   const [state, setState] = useState<HubState>();
+  const [history, setHistory] = useState<UsageHistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -157,6 +160,8 @@ export function App() {
     try {
       const next = await getState(selectedAccount || null);
       setState(next); setError('');
+      const timeline = next.selectedAccountUuid ? await getHistory(next.selectedAccountUuid) : { points: [] };
+      setHistory(timeline.points);
       if (!selectedAccount && next.selectedAccountUuid) {
         setSelectedAccount(next.selectedAccountUuid);
         window.localStorage.setItem('claude-hub-account', next.selectedAccountUuid);
@@ -176,6 +181,34 @@ export function App() {
   }, [refresh]);
 
   const draftTotal = useMemo(() => Object.values(draft).reduce((sum, value) => sum + (Number(value) || 0), 0), [draft]);
+  const chartOptions = useMemo<Highcharts.Options>(() => {
+    const total = state?.users.reduce((sum, user) => sum + user.weightedTokens, 0) ?? 0;
+    const start = state?.weekKey ? Date.parse(state.weekKey) - 7 * 86400_000 : undefined;
+    const colors = ['#62d8c0', '#f0bf68', '#8fa7ff', '#e98f9a', '#b393e8', '#91c9df'];
+    const series: Highcharts.SeriesLineOptions[] = (state?.users ?? []).map((user, index) => ({
+      type: 'line', name: user.username, color: colors[index % colors.length], lineWidth: 2.5,
+      marker: { enabled: false },
+      data: [
+        ...(start === undefined ? [] : [[start, 0] as [number, number]]),
+        ...history.map((point) => {
+          const weighted = point.weightedTokensByUser[user.username] ?? 0;
+          const value = total > 0 && user.quotaPercent > 0
+            ? weighted / total * state!.accountPercent / user.quotaPercent * 100 : 0;
+          return [point.timestamp, value] as [number, number];
+        }),
+      ],
+    }));
+    return {
+      chart: { type: 'line', height: 300, backgroundColor: 'transparent', spacing: [12, 8, 8, 8], style: { fontFamily: 'inherit' } },
+      title: { text: undefined }, credits: { enabled: false }, exporting: { enabled: false },
+      xAxis: { type: 'datetime', lineColor: '#2b3a3e', tickColor: '#2b3a3e', labels: { style: { color: '#a8b8bb' } } },
+      yAxis: { min: 0, title: { text: undefined }, gridLineColor: '#263438', labels: { format: '{value}%', style: { color: '#a8b8bb' } } },
+      legend: { itemStyle: { color: '#eaf1f2', fontWeight: '600' }, itemHoverStyle: { color: '#62d8c0' } },
+      tooltip: { shared: true, xDateFormat: '%d/%m %H:%M', valueDecimals: 1, valueSuffix: '% quota' },
+      plotOptions: { series: { animation: false, states: { inactive: { opacity: 0.35 } } } },
+      series,
+    };
+  }, [history, state]);
   const installCommand = `bash <(curl -fsSL ${window.location.origin}/install/${installPlatform}.sh)`;
 
   async function copyInstallCommand() {
@@ -198,6 +231,13 @@ export function App() {
     setBusy(true);
     try { await saveQuotas(quotas, selectedAccount); setNotice('Đã lưu phân bổ quota.'); await refresh(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được quota.'); }
+    finally { setBusy(false); }
+  }
+
+  async function changeAppendOnly(enabled: boolean) {
+    setBusy(true); setError(''); setNotice('');
+    try { await setAppendOnlyUsage(enabled); setNotice(enabled ? 'Đã bật chế độ chỉ cộng usage.' : 'Đã tắt chế độ chỉ cộng usage.'); await refresh(true); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được cài đặt.'); }
     finally { setBusy(false); }
   }
 
@@ -254,6 +294,15 @@ export function App() {
           <aside className="method-note"><h2>Cách tính</h2><p>Mức dùng theo người được phân bổ theo token trọng số giữa các máy. Đây là xấp xỉ, không phải công thức của Anthropic.</p><dl><div><dt>Input</dt><dd>×{state.weights.input}</dd></div><div><dt>Output</dt><dd>×{state.weights.output}</dd></div><div><dt>Cache tạo</dt><dd>×{state.weights.cacheCreation}</dd></div><div><dt>Cache đọc</dt><dd>×{state.weights.cacheRead}</dd></div></dl></aside>
         </section>
 
+        <section className="section history-section" aria-labelledby="history-title">
+          <div className="section-head"><div><p className="eyebrow">Tiến trình trong kỳ</p><h2 id="history-title">Mức dùng theo người</h2></div></div>
+          <div className="history-chart">
+            {history.length > 0 ? <HighchartsReact highcharts={Highcharts} options={chartOptions} />
+              : <p className="history-empty">Lịch sử biểu đồ sẽ được ghi nhận từ các report sau khi tính năng này được cài đặt.</p>}
+          </div>
+          <p className="history-note">Ước tính tỷ lệ quota theo token trọng số; đường biểu đồ chỉ có dữ liệu từ khi Hub bắt đầu lưu lịch sử.</p>
+        </section>
+
         <section className="section" aria-labelledby="people-title">
           <div className="section-head"><div><p className="eyebrow">Phân bổ sử dụng</p><h2 id="people-title">Theo người</h2></div><span className="count">{state.users.length} người</span></div>
           {state.users.length ? <div className="user-grid">{state.users.map((user) => <UserCard key={user.username} user={user} onRemove={handleRemove} busy={busy} />)}</div> : <div className="empty-card"><h3>Chưa có máy đăng ký</h3><p>Cài agent trên máy Claude CLI đầu tiên để lấy usage hiện tại.</p><button className="primary-button empty-action" type="button" onClick={() => setShowInstaller(true)}>Cài máy đầu tiên</button></div>}
@@ -287,6 +336,11 @@ export function App() {
             <div className="admin-actions"><button className="secondary-button" type="button" onClick={distributeEvenly} disabled={busy || state.users.length === 0}>Chia đều</button><button className="primary-button" type="submit" disabled={busy || state.users.length === 0 || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
           </form>
         </section>
+
+        <details className="admin-panel data-policy">
+          <summary><span><span className="eyebrow">Cài đặt dữ liệu nâng cao</span><strong>Chế độ lưu usage</strong></span></summary>
+          <label className="append-only-setting"><input type="checkbox" checked={state.usageAppendOnly} disabled={busy} onChange={(event) => void changeAppendOnly(event.target.checked)} /><span><strong>Chỉ cộng usage, không giảm số đã lưu</strong><small>Khi bật, report mới chỉ làm tổng token tăng trong cùng kỳ reset. Nếu agent gửi số thấp hơn, Hub giữ số cao đã có. Kỳ mới sẽ bắt đầu lại.</small></span></label>
+        </details>
 
       </>}
       {!state && loading && <div className="loading-card" role="status">Đang tải dữ liệu từ hub…</div>}

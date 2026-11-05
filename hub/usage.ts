@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { HubState, TokenTotals, UserState, Utilization, WeightConfig } from '../shared/types.ts';
+import type { HubState, TokenTotals, UsageHistoryPoint, UserState, Utilization, WeightConfig } from '../shared/types.ts';
 import { normalizeWeekKey } from './validate.ts';
 import { estimatedApiCostUsd } from './model-cost.ts';
 
@@ -23,6 +23,42 @@ export function weightedTokens(models: Record<string, TokenTotals>, weights: Wei
     + tokens.output * weights.output
     + tokens.cacheCreation * weights.cacheCreation
     + tokens.cacheRead * weights.cacheRead, 0);
+}
+
+export function readUsageHistory(db: DatabaseSync, accountUuid: string | null, weights: WeightConfig): UsageHistoryPoint[] {
+  if (!accountUuid) return [];
+  const latest = db.prepare('SELECT MAX(week_key) AS weekKey FROM reports WHERE account_uuid = ?').get(accountUuid) as { weekKey: string | null };
+  if (!latest.weekKey) return [];
+  const weekKey = normalizeWeekKey(latest.weekKey);
+  const rows = db.prepare(`SELECT h.machine_id AS machineId, m.username, h.bucket_ms AS timestamp, h.tokens_json AS tokensJson
+    FROM usage_history h JOIN machines m ON m.machine_id = h.machine_id
+    WHERE h.account_uuid = ? AND h.week_key = ? ORDER BY h.bucket_ms, h.machine_id`).all(accountUuid, weekKey) as unknown as Array<{ machineId: string; username: string; timestamp: number; tokensJson: string }>;
+  const perMachine = new Map<string, { username: string; weighted: number }>();
+  const points: UsageHistoryPoint[] = [];
+  for (let index = 0; index < rows.length;) {
+    const timestamp = rows[index]!.timestamp;
+    while (index < rows.length && rows[index]!.timestamp === timestamp) {
+      const row = rows[index++]!;
+      perMachine.set(row.machineId, { username: row.username, weighted: weightedTokens(parseJson<Record<string, TokenTotals>>(row.tokensJson, {}), weights) });
+    }
+    const weightedTokensByUser: Record<string, number> = {};
+    for (const machine of perMachine.values()) weightedTokensByUser[machine.username] = (weightedTokensByUser[machine.username] ?? 0) + machine.weighted;
+    points.push({ timestamp, weightedTokensByUser });
+  }
+  if (points.length <= 600) return points;
+  const sampled: UsageHistoryPoint[] = [];
+  for (let index = 0; index < 600; index += 1) sampled.push(points[Math.round(index * (points.length - 1) / 599)]!);
+  return sampled;
+}
+
+export function usageAppendOnly(db: DatabaseSync): boolean {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'usage_append_only'").get() as { value: string } | undefined;
+  return row ? row.value === '1' : true;
+}
+
+export function setUsageAppendOnly(db: DatabaseSync, enabled: boolean): void {
+  db.prepare("INSERT INTO settings(key, value) VALUES ('usage_append_only', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+    .run(enabled ? '1' : '0');
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -153,6 +189,7 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
     quotaTotal,
     quotaValid: Math.abs(quotaTotal - 100) <= 0.01,
     telegramConfigured,
+    usageAppendOnly: usageAppendOnly(db),
     weights,
     users,
   };

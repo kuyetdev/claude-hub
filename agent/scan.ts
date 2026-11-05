@@ -1,8 +1,9 @@
-import { glob, readFile, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { glob, open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ReportPayload, TokenTotals } from '../shared/types.ts';
 
-export interface AgentFileState { size: number; offset: number; ino?: number }
+export interface AgentFileState { size: number; offset: number; ino?: number; fingerprint?: string }
 export interface AgentState {
   accountUuid?: string;
   weekKey?: string;
@@ -10,6 +11,7 @@ export interface AgentState {
   seen: string[];
   tokensByModel: Record<string, TokenTotals>;
   accounts?: Record<string, { weekKey: string; tokensByModel: Record<string, TokenTotals> }>;
+  pendingReport?: ReportPayload;
 }
 
 interface ClaudeConfig {
@@ -106,6 +108,13 @@ function canonicalReset(value: string): string {
   return new Date(Math.round(timestamp / 60_000) * 60_000).toISOString();
 }
 
+async function prefixFingerprint(handle: Awaited<ReturnType<typeof open>>, offset: number): Promise<string> {
+  const start = Math.max(0, offset - 4096);
+  const buffer = Buffer.alloc(offset - start);
+  const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+  return createHash('sha256').update(buffer.subarray(0, bytesRead)).digest('hex');
+}
+
 export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string, rateLimitCachePath?: string, trackingSince: number | Record<string, number> = 0): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
   const rawConfig = await readFile(join(claudeHome, '..', '.claude.json'), 'utf8');
   const config = JSON.parse(rawConfig) as ClaudeConfig;
@@ -165,28 +174,40 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
   const cutoffMs = Math.max(Date.parse(weekKey) - 7 * 24 * 60 * 60 * 1000, trackingSinceMs);
 
   for await (const file of glob(join(claudeHome, 'projects', '**', '*.jsonl'))) {
-    const info = await stat(file);
-    const old = state.files[file];
-    const start = old && info.size >= old.size && (old.ino === undefined || old.ino === info.ino) ? old.offset : 0;
-    if (start >= info.size) {
-      state.files[file] = { size: info.size, offset: info.size, ino: info.ino };
-      continue;
-    }
-    const buffer = await readFile(file);
-    const addition = buffer.subarray(start).toString('utf8');
-    const hasTrailingLine = addition.endsWith('\n');
-    const lines = addition.split('\n');
-    const trailing = hasTrailingLine ? '' : (lines.pop() ?? '');
-    for (const line of lines) {
-      if (!line) continue;
-      const parsed = parseUsageLine(line, cutoffMs);
-      if (!parsed || seen.has(parsed.id)) continue;
-      seen.add(parsed.id);
-      const total = accountState.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, requests: 0, cacheCreation5m: 0, cacheCreation1h: 0, cacheMisses: 0 };
-      addTokens(total, parsed.tokens);
-      accountState.tokensByModel[parsed.model] = total;
-    }
-    state.files[file] = { size: info.size, offset: info.size - Buffer.byteLength(trailing), ino: info.ino };
+    const handle = await open(file, 'r');
+    try {
+      const info = await handle.stat();
+      const old = state.files[file];
+      // Read only the new tail, not the entire multi-gigabyte history, on every hook call.
+      // The fingerprint detects same-path/same-inode rewrites such as transcript cleanup.
+      const cursorIsValid = Boolean(old?.fingerprint)
+        && old!.offset <= info.size
+        && (old!.ino === undefined || old!.ino === info.ino)
+        && await prefixFingerprint(handle, old!.offset) === old!.fingerprint;
+      const start = cursorIsValid ? old!.offset : 0;
+      const buffer = Buffer.alloc(Math.max(0, info.size - start));
+      let bytesRead = 0;
+      while (bytesRead < buffer.length) {
+        const result = await handle.read(buffer, bytesRead, buffer.length - bytesRead, start + bytesRead);
+        if (result.bytesRead === 0) break;
+        bytesRead += result.bytesRead;
+      }
+      // Find the last newline in bytes, not by measuring a decoded UTF-8 tail; the last
+      // character may be incomplete while Claude is still appending a multibyte line.
+      const completeBytes = buffer.subarray(0, bytesRead).lastIndexOf(0x0a) + 1;
+      const lines = buffer.subarray(0, completeBytes).toString('utf8').split('\n');
+      for (const line of lines) {
+        if (!line) continue;
+        const parsed = parseUsageLine(line, cutoffMs);
+        if (!parsed || seen.has(parsed.id)) continue;
+        seen.add(parsed.id);
+        const total = accountState.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, requests: 0, cacheCreation5m: 0, cacheCreation1h: 0, cacheMisses: 0 };
+        addTokens(total, parsed.tokens);
+        accountState.tokensByModel[parsed.model] = total;
+      }
+      const offset = start + completeBytes;
+      state.files[file] = { size: start + bytesRead, offset, ino: info.ino, fingerprint: await prefixFingerprint(handle, offset) };
+    } finally { await handle.close(); }
   }
   state.seen = [...seen];
   state.accountUuid = accountUuid as string;

@@ -10,7 +10,10 @@ function finite(value: unknown, min = 0): value is number {
 function validTokens(value: unknown): value is TokenTotals {
   if (!value || typeof value !== 'object') return false;
   const item = value as Record<string, unknown>;
-  return finite(item.input) && finite(item.output) && finite(item.cacheCreation) && finite(item.cacheRead);
+  const required = ['input', 'output', 'cacheCreation', 'cacheRead'];
+  const optional = ['requests', 'cacheCreation5m', 'cacheCreation1h', 'cacheMisses', 'lastActivityMs', 'lastActivityCacheRead', 'lastCacheTtlMs', 'lastCacheWriteMs', 'metricsFromMs'];
+  return required.every((key) => Number.isSafeInteger(item[key]) && finite(item[key]))
+    && optional.every((key) => item[key] === undefined || finite(item[key]));
 }
 
 export function isReport(value: unknown): value is ReportPayload {
@@ -23,7 +26,8 @@ export function isReport(value: unknown): value is ReportPayload {
   if (typeof item.weekResetsAt !== 'string' || !Number.isFinite(Date.parse(item.weekResetsAt))) return false;
   if (!utilization || !finite(utilization.weeklyPercent) || !finite(utilization.fetchedAtMs) || !(utilization.fiveHourPercent === null || finite(utilization.fiveHourPercent))) return false;
   if (!item.tokensByModel || typeof item.tokensByModel !== 'object' || Array.isArray(item.tokensByModel)) return false;
-  if (Object.keys(item.tokensByModel).length > 100 || !Object.values(item.tokensByModel).every(validTokens)) return false;
+  if (Object.keys(item.tokensByModel).length > 100
+    || !Object.entries(item.tokensByModel).every(([model, tokens]) => model.length > 0 && model.length <= 128 && validTokens(tokens))) return false;
   return typeof item.agentVersion === 'string' && item.agentVersion.length <= 32 && finite(item.sentAtMs);
 }
 

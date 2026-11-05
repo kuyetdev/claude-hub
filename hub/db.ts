@@ -56,6 +56,16 @@ export function openDatabase(path: string): DatabaseSync {
       PRIMARY KEY (week_key, scope, threshold)
     );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS usage_history (
+      account_uuid TEXT NOT NULL REFERENCES accounts(account_uuid) ON DELETE CASCADE,
+      machine_id TEXT NOT NULL REFERENCES machines(machine_id) ON DELETE CASCADE,
+      week_key TEXT NOT NULL,
+      bucket_ms INTEGER NOT NULL,
+      tokens_json TEXT NOT NULL,
+      captured_ms INTEGER NOT NULL,
+      PRIMARY KEY (account_uuid, machine_id, week_key, bucket_ms)
+    );
+    CREATE INDEX IF NOT EXISTS usage_history_period ON usage_history(account_uuid, week_key, bucket_ms);
   `);
   const reportColumns = db.prepare('PRAGMA table_info(reports)').all() as unknown as Array<{ name: string; pk: number }>;
   const reportPk = reportColumns.filter((column) => column.pk > 0).sort((a, b) => a.pk - b.pk).map((column) => column.name);
@@ -85,5 +95,8 @@ export function openDatabase(path: string): DatabaseSync {
       COMMIT;
     `);
   }
+  // Seed one baseline point from the current snapshot when upgrading an existing Hub.
+  db.exec(`INSERT OR IGNORE INTO usage_history(account_uuid, machine_id, week_key, bucket_ms, tokens_json, captured_ms)
+    SELECT account_uuid, machine_id, week_key, (received_ms / 60000) * 60000, tokens_json, received_ms FROM reports`);
   return db;
 }

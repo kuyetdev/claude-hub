@@ -4,10 +4,10 @@ import { extname, join, normalize } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import type { HubConfig } from './config.ts';
-import type { ReportPayload } from '../shared/types.ts';
+import type { ReportPayload, TokenTotals } from '../shared/types.ts';
 import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
-import { computeState, updateQuotas } from './usage.ts';
+import { computeState, readUsageHistory, setUsageAppendOnly, updateQuotas, usageAppendOnly } from './usage.ts';
 import { createInstallScript } from './install.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -91,7 +91,7 @@ function registerMachine(db: DatabaseSync, body: Record<string, unknown>): strin
       db.prepare('INSERT OR IGNORE INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?)').run(accountUuid, email, Date.now());
       db.prepare(`INSERT INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)
         ON CONFLICT(account_uuid, machine_id) DO UPDATE SET tracking_since_ms = excluded.tracking_since_ms`)
-        .run(accountUuid, machineId, trackingSinceMs ?? Date.now());
+        .run(accountUuid, machineId, trackingSinceMs ?? 0);
       const existingAccountUser = db.prepare('SELECT username FROM account_users WHERE account_uuid = ? AND username = ?').get(accountUuid, username);
       if (!existingAccountUser) {
         const count = Number((db.prepare('SELECT COUNT(*) AS count FROM account_users WHERE account_uuid = ?').get(accountUuid) as {count:number}).count);
@@ -121,6 +121,17 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
   db.exec('BEGIN IMMEDIATE');
   try {
     const existingAccount = db.prepare('SELECT account_uuid FROM accounts WHERE account_uuid = ?').get(report.accountUuid);
+    const accountLatest = db.prepare('SELECT MAX(week_key) AS weekKey FROM reports WHERE account_uuid = ?').get(report.accountUuid) as { weekKey: string | null };
+    if (accountLatest.weekKey && normalizeWeekKey(accountLatest.weekKey) > weekKey) {
+      db.exec('COMMIT');
+      return normalizeWeekKey(accountLatest.weekKey);
+    }
+    const previous = db.prepare('SELECT week_key AS weekKey, tokens_json AS tokensJson, utilization_json AS utilizationJson FROM reports WHERE account_uuid = ? AND machine_id = ?')
+      .get(report.accountUuid, report.machineId) as { weekKey: string; tokensJson: string; utilizationJson: string } | undefined;
+    if (previous && normalizeWeekKey(previous.weekKey) > weekKey) {
+      db.exec('COMMIT');
+      return normalizeWeekKey(previous.weekKey);
+    }
     db.prepare(`INSERT INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?)
       ON CONFLICT(account_uuid) DO UPDATE SET email = COALESCE(excluded.email, accounts.email)`)
       .run(report.accountUuid, report.accountEmail || null, now);
@@ -138,6 +149,39 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
       db.prepare('INSERT INTO account_users(account_uuid, username, quota_percent, quota_manual) VALUES (?, ?, ?, 0)')
         .run(report.accountUuid, machineOwner.username, hasManual ? 0 : 100 / (count + 1));
     }
+    let tokensByModel = report.tokensByModel;
+    let utilization = report.utilization;
+    if (previous && normalizeWeekKey(previous.weekKey) === weekKey) {
+      const oldTokens = JSON.parse(previous.tokensJson) as Record<string, TokenTotals>;
+      const oldUtilization = JSON.parse(previous.utilizationJson) as ReportPayload['utilization'];
+      if (usageAppendOnly(db)) {
+        tokensByModel = { ...oldTokens };
+        for (const [model, incoming] of Object.entries(report.tokensByModel)) {
+          const old = oldTokens[model];
+          if (!old) { tokensByModel[model] = incoming; continue; }
+          const merged: TokenTotals = { ...old };
+          for (const key of ['input', 'output', 'cacheCreation', 'cacheRead', 'requests', 'cacheCreation5m', 'cacheCreation1h', 'cacheMisses'] as const) {
+            const before = old[key] ?? 0;
+            const after = incoming[key] ?? 0;
+            merged[key] = Math.max(before, after) as never;
+          }
+          if ((incoming.lastActivityMs ?? 0) >= (old.lastActivityMs ?? 0)) {
+            merged.lastActivityMs = incoming.lastActivityMs;
+            merged.lastActivityCacheRead = incoming.lastActivityCacheRead;
+          }
+          if ((incoming.lastCacheWriteMs ?? 0) >= (old.lastCacheWriteMs ?? 0)) {
+            merged.lastCacheWriteMs = incoming.lastCacheWriteMs;
+            merged.lastCacheTtlMs = incoming.lastCacheTtlMs;
+          }
+          merged.metricsFromMs = Math.min(old.metricsFromMs ?? Infinity, incoming.metricsFromMs ?? Infinity);
+          if (merged.metricsFromMs === Infinity) delete merged.metricsFromMs;
+          tokensByModel[model] = merged;
+        }
+      }
+      if (report.utilization.fetchedAtMs < oldUtilization.fetchedAtMs) utilization = oldUtilization;
+    }
+    const tokensJson = JSON.stringify(tokensByModel);
+    const utilizationJson = JSON.stringify(utilization);
     db.prepare(`
       INSERT INTO reports(account_uuid, machine_id, week_key, tokens_json, utilization_json, received_ms)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -146,7 +190,13 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
         tokens_json = excluded.tokens_json,
         utilization_json = excluded.utilization_json,
         received_ms = excluded.received_ms
-    `).run(report.accountUuid, report.machineId, weekKey, JSON.stringify(report.tokensByModel), JSON.stringify(report.utilization), now);
+    `).run(report.accountUuid, report.machineId, weekKey, tokensJson, utilizationJson, now);
+    const bucketMs = Math.floor(now / 60_000) * 60_000;
+    db.prepare(`INSERT INTO usage_history(account_uuid, machine_id, week_key, bucket_ms, tokens_json, captured_ms)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(account_uuid, machine_id, week_key, bucket_ms)
+      DO UPDATE SET tokens_json = excluded.tokens_json, captured_ms = excluded.captured_ms`)
+      .run(report.accountUuid, report.machineId, weekKey, bucketMs, tokensJson, now);
+    db.prepare('DELETE FROM usage_history WHERE captured_ms < ?').run(now - 14 * 86400_000);
     db.prepare('UPDATE machines SET last_seen_ms = ?, agent_version = ? WHERE machine_id = ?')
       .run(now, report.agentVersion, report.machineId);
     db.exec('COMMIT');
@@ -212,11 +262,17 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         try {
           const account = db.prepare('SELECT account_uuid FROM accounts WHERE account_uuid = ?').get(accountUuid);
           const membership = db.prepare('SELECT tracking_since_ms AS trackingSinceMs FROM account_machines WHERE account_uuid = ? AND machine_id = ?').get(accountUuid, machine.machineId) as { trackingSinceMs: number } | undefined;
-          const trackingSinceMs = membership?.trackingSinceMs ?? (account ? 0 : Math.max(0, now() - 60_000));
+          const latestReport = db.prepare('SELECT week_key AS weekKey FROM reports WHERE account_uuid = ? ORDER BY received_ms DESC LIMIT 1').get(accountUuid) as { weekKey: string } | undefined;
+          const periodStart = latestReport ? Date.parse(normalizeWeekKey(latestReport.weekKey)) - 7 * 86400_000 : 0;
+          // Count existing current-cycle transcripts when a user first joins the hub. A fresh
+          // Claude account naturally has no earlier transcript entries, so a zero cursor covers
+          // both first-use and already-used-before-enrollment cases without a blind 60s gap.
+          const trackingSinceMs = Math.min(membership?.trackingSinceMs ?? 0, periodStart || Number.MAX_SAFE_INTEGER);
           const email = typeof body.accountEmail === 'string' && body.accountEmail.length <= 320 ? body.accountEmail : null;
           db.prepare('INSERT INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?) ON CONFLICT(account_uuid) DO UPDATE SET email = COALESCE(excluded.email, accounts.email)')
             .run(accountUuid, email, now());
-          db.prepare('INSERT OR IGNORE INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)')
+          db.prepare(`INSERT INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)
+            ON CONFLICT(account_uuid, machine_id) DO UPDATE SET tracking_since_ms = excluded.tracking_since_ms`)
             .run(accountUuid, machine.machineId, trackingSinceMs);
           const accountUserExists = db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND username = ?').get(accountUuid, owner.username);
           if (!accountUserExists) {
@@ -265,6 +321,16 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
       }
       if (request.method === 'GET' && url.pathname === '/api/state') {
         return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now(), url.searchParams.get('account')));
+      }
+      if (request.method === 'GET' && url.pathname === '/api/history') {
+        const account = url.searchParams.get('account');
+        return sendJson(response, 200, { points: readUsageHistory(db, account, config.weights) });
+      }
+      if (request.method === 'PUT' && url.pathname === '/api/settings/usage-append-only') {
+        const body = await readJson(request) as Record<string, unknown>;
+        if (typeof body.enabled !== 'boolean') return sendJson(response, 400, { error: 'Giá trị cài đặt không hợp lệ.' });
+        setUsageAppendOnly(db, body.enabled);
+        return sendJson(response, 200, { ok: true, enabled: usageAppendOnly(db) });
       }
       if (request.method === 'PUT' && url.pathname === '/api/quota') {
         updateQuotas(db, await readJson(request), url.searchParams.get('account'));
