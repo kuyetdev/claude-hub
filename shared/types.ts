@@ -3,6 +3,15 @@ export interface TokenTotals {
   output: number;
   cacheCreation: number;
   cacheRead: number;
+  requests?: number;
+  cacheCreation5m?: number;
+  cacheCreation1h?: number;
+  cacheMisses?: number;
+  lastActivityMs?: number;
+  lastActivityCacheRead?: number;
+  lastCacheTtlMs?: number;
+  lastCacheWriteMs?: number;
+  metricsFromMs?: number;
 }
 
 export interface Utilization {
@@ -42,7 +51,13 @@ export interface UserState {
   usedPercent: number;
   quotaRatioPercent: number;
   weightedTokens: number;
-  modelUsages: Array<{ model: string; tokenCount: number; weightedTokens: number; sharePercent: number }>;
+  modelUsages: Array<{
+    model: string; tokenCount: number; input: number; output: number; cacheRead: number; cacheCreation: number;
+    cacheCreation5m: number; cacheCreation1h: number;
+    requests: number | null; misses: number | null; cacheHitPercent: number; cacheStatus: string; cacheTtlMinutes: number | null;
+    lastActivityMs: number | null; metricsFromMs: number | null; costUsd: number | null;
+    weightedTokens: number; sharePercent: number;
+  }>;
   machines: MachineState[];
 }
 

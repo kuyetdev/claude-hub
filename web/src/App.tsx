@@ -3,10 +3,23 @@ import type { HubState, UserState } from '../../shared/types.ts';
 import { getState, removeMachine, saveQuotas } from './api.ts';
 
 const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
+const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
 
 function formatPercent(value: number): string { return `${number.format(value)}%`; }
 function formatTime(value: number | string | null): string { return value ? dateTime.format(new Date(value)) : 'Chưa có dữ liệu'; }
+function shortCount(value: number): string {
+  const units: Array<[number, string]> = [[1_000_000_000, 'b'], [1_000_000, 'm'], [1_000, 'k']];
+  for (const [size, suffix] of units) if (value >= size) return `${number.format(value / size)}${suffix}`;
+  return number.format(value);
+}
+function formatAge(value: number | null): string {
+  if (!value) return 'chưa rõ';
+  const seconds = Math.max(0, Math.floor((Date.now() - value) / 1000));
+  if (seconds < 60) return `${seconds}s trước`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} phút trước`;
+  return `${Math.floor(seconds / 3600)} giờ trước`;
+}
 function statusClass(ratio: number): string { return ratio >= 100 ? 'danger' : ratio >= 80 ? 'warn' : 'ok'; }
 
 function Progress({ value, label, ratio = value }: { value: number; label: string; ratio?: number }) {
@@ -23,14 +36,19 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
     </div>
     <Progress value={user.usedPercent} ratio={user.quotaRatioPercent} label={`${user.username} đã dùng ${formatPercent(user.quotaRatioPercent)} quota`} />
     <p className="approx">Quy đổi xấp xỉ: <span className="mono">{number.format(user.weightedTokens)}</span> token trọng số</p>
-    {user.modelUsages.length > 0 && <section className="model-breakdown" aria-label={`Token theo model của ${user.username}`}>
-      <h4>Theo model <span>Tỷ trọng trên tổng của user</span></h4>
+    {user.modelUsages.length > 0 && <details className="model-breakdown">
+      <summary><span className="model-summary-closed">Xem thêm · Chi tiết theo model</span><span className="model-summary-open">Thu gọn · Chi tiết theo model</span></summary>
+      <p className="model-hint">Tỷ lệ là phần mức dùng trọng số trong tổng của user. Giá USD là ước tính theo giá API Anthropic.</p>
       {user.modelUsages.map((usage) => <div className="model-row" key={usage.model}>
         <div className="model-row-head"><strong>{usage.model}</strong><span>{formatPercent(usage.sharePercent)}</span></div>
         <div className="model-meter" role="progressbar" aria-label={`${usage.model}: ${formatPercent(usage.sharePercent)} token trọng số`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.sharePercent)}><span style={{ transform: `scaleX(${Math.min(usage.sharePercent, 100) / 100})` }} /></div>
-        <small>{number.format(usage.tokenCount)} token thô · {number.format(usage.weightedTokens)} token trọng số</small>
+        <small>{shortCount(usage.input)} input · {shortCount(usage.output)} output · {shortCount(usage.cacheRead)} cache read · {shortCount(usage.cacheCreation)} cache write</small>
+        <small>{usage.requests ?? '—'} requests · {formatPercent(usage.cacheHitPercent)} input từ cache · {usage.misses ?? '—'} misses · {usage.costUsd === null ? 'chi phí chưa rõ' : money.format(usage.costUsd)}</small>
+        <small>Prompt cache: {usage.cacheStatus === 'warm' ? 'warm' : usage.cacheStatus === 'cold' ? 'cold' : 'chưa rõ'}{usage.cacheTtlMinutes ? ` · TTL ${usage.cacheTtlMinutes} phút` : ''} · hoạt động {formatAge(usage.lastActivityMs)}</small>
+        {usage.metricsFromMs !== null && <small>Chi tiết request/cache từ {formatTime(usage.metricsFromMs)}</small>}
+        <small>{shortCount(usage.tokenCount)} token tổng · {shortCount(usage.weightedTokens)} token trọng số</small>
       </div>)}
-    </section>}
+    </details>}
     <div className="machines">
       <h4>Máy đã đăng ký <span>{user.machines.length}</span></h4>
       {user.machines.length === 0 ? <p className="empty">Chưa có máy.</p> : user.machines.map((machine) => <div className="machine" key={machine.machineId}>

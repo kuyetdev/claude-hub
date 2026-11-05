@@ -37,7 +37,7 @@ function numberOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-function parseUsageLine(line: string, cutoffMs: number): { id: string; model: string; tokens: TokenTotals } | undefined {
+function parseUsageLine(line: string, cutoffMs: number): { id: string; model: string; timestamp: number; tokens: TokenTotals } | undefined {
   try {
     const item = JSON.parse(line) as Record<string, unknown>;
     const message = item.message as Record<string, unknown> | undefined;
@@ -48,14 +48,29 @@ function parseUsageLine(line: string, cutoffMs: number): { id: string; model: st
     const requestId = typeof item.requestId === 'string' ? item.requestId : '';
     if (!messageId || !requestId || typeof message.model !== 'string' || !message.model) return undefined;
     if (!message.model.startsWith('claude-') && message.model !== '<synthetic>') return undefined;
+    const creation = usage.cache_creation && typeof usage.cache_creation === 'object' ? usage.cache_creation as Record<string, unknown> : {};
+    const cacheCreation5m = numberOrZero(creation.ephemeral_5m_input_tokens);
+    const cacheCreation1h = numberOrZero(creation.ephemeral_1h_input_tokens);
+    const cacheCreation = numberOrZero(usage.cache_creation_input_tokens);
+    const cacheRead = numberOrZero(usage.cache_read_input_tokens);
     return {
       id: `${messageId}\u0000${requestId}`,
       model: message.model.slice(0, 128),
+      timestamp,
       tokens: {
         input: numberOrZero(usage.input_tokens),
         output: numberOrZero(usage.output_tokens),
-        cacheCreation: numberOrZero(usage.cache_creation_input_tokens),
-        cacheRead: numberOrZero(usage.cache_read_input_tokens),
+        cacheCreation,
+        cacheRead,
+        requests: 1,
+        cacheCreation5m,
+        cacheCreation1h,
+        cacheMisses: cacheCreation > 0 && cacheRead === 0 ? 1 : 0,
+        lastActivityMs: timestamp,
+        lastActivityCacheRead: cacheRead,
+        lastCacheTtlMs: cacheCreation1h > 0 ? 3_600_000 : cacheCreation5m > 0 ? 300_000 : 0,
+        lastCacheWriteMs: cacheCreation > 0 ? timestamp : undefined,
+        metricsFromMs: timestamp,
       },
     };
   } catch { return undefined; }
@@ -66,6 +81,19 @@ function addTokens(target: TokenTotals, source: TokenTotals): void {
   target.output += source.output;
   target.cacheCreation += source.cacheCreation;
   target.cacheRead += source.cacheRead;
+  target.requests = (target.requests ?? 0) + (source.requests ?? 1);
+  target.cacheCreation5m = (target.cacheCreation5m ?? 0) + (source.cacheCreation5m ?? 0);
+  target.cacheCreation1h = (target.cacheCreation1h ?? 0) + (source.cacheCreation1h ?? 0);
+  target.cacheMisses = (target.cacheMisses ?? 0) + (source.cacheMisses ?? 0);
+  if ((source.lastActivityMs ?? 0) >= (target.lastActivityMs ?? 0)) {
+    target.lastActivityMs = source.lastActivityMs;
+    target.lastActivityCacheRead = source.lastActivityCacheRead;
+  }
+  if ((source.cacheCreation ?? 0) > 0 && (source.lastActivityMs ?? 0) >= (target.lastCacheWriteMs ?? 0)) {
+    target.lastCacheWriteMs = source.lastActivityMs;
+    target.lastCacheTtlMs = source.lastCacheTtlMs;
+  }
+  if (target.metricsFromMs === undefined || (source.metricsFromMs ?? Infinity) < target.metricsFromMs) target.metricsFromMs = source.metricsFromMs;
 }
 
 function resetIso(value: unknown): string | undefined {
@@ -154,7 +182,7 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
       const parsed = parseUsageLine(line, cutoffMs);
       if (!parsed || seen.has(parsed.id)) continue;
       seen.add(parsed.id);
-      const total = accountState.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+      const total = accountState.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, requests: 0, cacheCreation5m: 0, cacheCreation1h: 0, cacheMisses: 0 };
       addTokens(total, parsed.tokens);
       accountState.tokensByModel[parsed.model] = total;
     }

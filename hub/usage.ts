@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { HubState, TokenTotals, UserState, Utilization, WeightConfig } from '../shared/types.ts';
 import { normalizeWeekKey } from './validate.ts';
+import { estimatedApiCostUsd } from './model-cost.ts';
 
 interface ReportRow {
   username: string;
@@ -73,10 +74,30 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
       for (const [model, totals] of Object.entries(machineModels)) {
         let usage = user.modelUsages.find((item) => item.model === model);
         if (!usage) {
-          usage = { model, tokenCount: 0, weightedTokens: 0, sharePercent: 0 };
+          usage = {
+            model, tokenCount: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0,
+            cacheCreation5m: 0, cacheCreation1h: 0, requests: 0, misses: 0,
+            cacheHitPercent: 0, cacheStatus: 'unknown', cacheTtlMinutes: null,
+            lastActivityMs: null, metricsFromMs: null, costUsd: 0,
+            weightedTokens: 0, sharePercent: 0,
+          };
           user.modelUsages.push(usage);
         }
         usage.tokenCount += rawTokens({ [model]: totals });
+        usage.input += totals.input;
+        usage.output += totals.output;
+        usage.cacheRead += totals.cacheRead;
+        usage.cacheCreation += totals.cacheCreation;
+        usage.cacheCreation5m += totals.cacheCreation5m ?? 0;
+        usage.cacheCreation1h += totals.cacheCreation1h ?? 0;
+        if (typeof totals.requests === 'number' && usage.requests !== null) usage.requests += totals.requests;
+        else usage.requests = null;
+        if (typeof totals.cacheMisses === 'number' && usage.misses !== null) usage.misses += totals.cacheMisses;
+        else usage.misses = null;
+        usage.lastActivityMs = Math.max(usage.lastActivityMs ?? 0, totals.lastActivityMs ?? 0) || null;
+        usage.metricsFromMs = Math.min(usage.metricsFromMs ?? Infinity, totals.metricsFromMs ?? Infinity);
+        const cost = estimatedApiCostUsd(model, totals);
+        usage.costUsd = cost === null || usage.costUsd === null ? null : usage.costUsd + cost;
         usage.weightedTokens += weightedTokens({ [model]: totals }, weights);
       }
       user.machines.push({
@@ -97,6 +118,21 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
     user.quotaRatioPercent = user.quotaPercent > 0 ? user.usedPercent / user.quotaPercent * 100 : (user.usedPercent > 0 ? 100 : 0);
     for (const model of user.modelUsages) {
       model.sharePercent = user.weightedTokens > 0 ? model.weightedTokens / user.weightedTokens * 100 : 0;
+      const inputTotal = model.input + model.cacheRead + model.cacheCreation;
+      model.cacheHitPercent = inputTotal > 0 ? model.cacheRead / inputTotal * 100 : 0;
+      const rawMetrics = rows
+        .filter((row) => row.username === user.username && row.weekKey && normalizeWeekKey(row.weekKey) === weekKey)
+        .map((row) => parseJson<Record<string, TokenTotals>>(row.tokensJson, {})[model.model])
+        .filter((tokens): tokens is TokenTotals => Boolean(tokens));
+      const recentCacheRead = rawMetrics.some((tokens) => (tokens.lastActivityCacheRead ?? 0) > 0
+        && tokens.lastActivityMs !== undefined && now - tokens.lastActivityMs <= (tokens.lastCacheTtlMs || 300_000));
+      const latestWrite = rawMetrics.reduce((latest, tokens) => (tokens.lastCacheWriteMs ?? 0) > latest.lastCacheWriteMs
+        ? { lastCacheWriteMs: tokens.lastCacheWriteMs ?? 0, ttlMs: tokens.lastCacheTtlMs ?? 0 }
+        : latest, { lastCacheWriteMs: 0, ttlMs: 0 });
+      const writeWarm = latestWrite.lastCacheWriteMs > 0 && latestWrite.ttlMs > 0 && now - latestWrite.lastCacheWriteMs <= latestWrite.ttlMs;
+      model.cacheStatus = recentCacheRead || writeWarm ? 'warm' : latestWrite.lastCacheWriteMs ? 'cold' : 'unknown';
+      model.cacheTtlMinutes = latestWrite.ttlMs ? latestWrite.ttlMs / 60_000 : null;
+      if (model.metricsFromMs === Infinity) model.metricsFromMs = null;
     }
     user.modelUsages.sort((a, b) => b.weightedTokens - a.weightedTokens || a.model.localeCompare(b.model));
     for (const machine of user.machines) {
