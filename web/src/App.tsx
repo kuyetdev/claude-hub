@@ -201,6 +201,16 @@ export function App() {
     finally { setBusy(false); }
   }
 
+  function distributeEvenly() {
+    if (!state?.users.length) return;
+    const unitsPerUser = Math.floor(1000 / state.users.length);
+    const remainder = 1000 - unitsPerUser * state.users.length;
+    setDraft(Object.fromEntries(state.users.map((user, index) => [
+      user.username,
+      ((unitsPerUser + (index < remainder ? 1 : 0)) / 10).toFixed(1),
+    ])));
+  }
+
   async function handleRemove(machineId: string, host: string) {
     if (!window.confirm(`Gỡ máy “${host}”? Token máy sẽ bị thu hồi.`)) return;
     setBusy(true); setError(''); setNotice('');
@@ -274,7 +284,7 @@ export function App() {
           <p className="helper">Phân bổ quota cho toàn bộ người dùng. Tổng phải bằng 100%.</p>
           <form onSubmit={submitQuotas}>
             <div className="quota-fields">{state.users.map((user) => <label key={user.username}><span>{user.username}</span><span className="input-suffix"><input type="number" min="0" max="100" step="0.1" inputMode="decimal" value={draft[user.username] ?? ''} onChange={(event) => setDraft((current) => ({ ...current, [user.username]: event.target.value }))} required />%</span></label>)}</div>
-            <div className="admin-actions"><button className="primary-button" type="submit" disabled={busy || state.users.length === 0 || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
+            <div className="admin-actions"><button className="secondary-button" type="button" onClick={distributeEvenly} disabled={busy || state.users.length === 0}>Chia đều</button><button className="primary-button" type="submit" disabled={busy || state.users.length === 0 || Math.abs(draftTotal - 100) > .01}>{busy ? 'Đang lưu…' : 'Lưu phân bổ'}</button></div>
           </form>
         </section>
 
