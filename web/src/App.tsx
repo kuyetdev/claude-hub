@@ -227,7 +227,7 @@ export function App() {
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5v-9Z" /><path d="m8.5 10 3.5 2 3.5-2M12 12v4" /></svg></span>
+        <span className="brand-mark"><img src="/claude-hub-logo.png" alt="Claude Hub" /></span>
         <div><h1>Claude Hub</h1><p>Hạn mức dùng chung, rõ theo từng người</p></div>
       </div>
       {state && state.accounts.length > 0 && <AccountPicker accounts={state.accounts} selected={state.selectedAccountUuid} onChange={selectAccount} />}
