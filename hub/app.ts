@@ -151,6 +151,19 @@ function serveStatic(response: ServerResponse, distDir: string, pathname: string
 export function createHandler(db: DatabaseSync, config: HubConfig, options: { distDir?: string; checkAlerts?: AlertCheck; now?: () => number } = {}) {
   const now = options.now ?? Date.now;
   const distDir = options.distDir ?? join(process.cwd(), 'dist');
+  function installOrigin(request: IncomingMessage): string | undefined {
+    const host = String(request.headers['x-forwarded-host'] ?? request.headers.host ?? '').split(',')[0].trim();
+    if (!host || /[\s/\\@]/.test(host)) return undefined;
+    let protocol = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim().toLowerCase();
+    if (protocol !== 'http' && protocol !== 'https') {
+      const visitor = request.headers['cf-visitor'];
+      if (typeof visitor === 'string') {
+        try { const scheme = (JSON.parse(visitor) as { scheme?: unknown }).scheme; if (scheme === 'http' || scheme === 'https') protocol = scheme; } catch { /* use socket fallback */ }
+      }
+    }
+    if (protocol !== 'http' && protocol !== 'https') protocol = 'http';
+    try { return new URL(`${protocol}://${host}`).origin; } catch { return undefined; }
+  }
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
     try {
@@ -169,10 +182,10 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         return;
       }
       if (request.method === 'GET' && url.pathname === '/install/ubuntu.sh') {
-        return sendText(response, 200, createInstallScript('ubuntu', config));
+        return sendText(response, 200, createInstallScript('ubuntu', config, installOrigin(request)));
       }
       if (request.method === 'GET' && url.pathname === '/install/macos.sh') {
-        return sendText(response, 200, createInstallScript('macos', config));
+        return sendText(response, 200, createInstallScript('macos', config, installOrigin(request)));
       }
       if (request.method === 'GET' && url.pathname === '/api/state') {
         return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now()));
