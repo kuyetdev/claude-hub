@@ -15,6 +15,8 @@ export interface Utilization {
 export interface ReportPayload {
   machineId: string;
   accountUuid: string;
+  accountEmail?: string;
+  trackingSinceMs?: number;
   weekResetsAt: string;
   utilization: Utilization;
   tokensByModel: Record<string, TokenTotals>;
@@ -31,6 +33,7 @@ export interface MachineState {
   weightedTokens: number;
   usedPercent: number;
   observedSharePercent: number;
+  trackingSinceMs: number;
 }
 
 export interface UserState {
@@ -43,6 +46,8 @@ export interface UserState {
 }
 
 export interface HubState {
+  accounts: Array<{ accountUuid: string; email: string | null; label: string; resetAt: string | null }>;
+  selectedAccountUuid: string | null;
   weekKey: string | null;
   accountPercent: number;
   fetchedAtMs: number | null;

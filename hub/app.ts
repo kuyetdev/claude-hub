@@ -63,6 +63,8 @@ function registerMachine(db: DatabaseSync, body: Record<string, unknown>): strin
   if (!USERNAME_RE.test(username) || !UUID_RE.test(machineId) || hostname.length < 1 || hostname.length > 253) {
     throw new Error('INVALID_REGISTER');
   }
+  const accountUuid = typeof body.accountUuid === 'string' && body.accountUuid.length <= 128 ? body.accountUuid : undefined;
+  const trackingSinceMs = typeof body.trackingSinceMs === 'number' && Number.isFinite(body.trackingSinceMs) && body.trackingSinceMs >= 0 ? body.trackingSinceMs : undefined;
   db.exec('BEGIN IMMEDIATE');
   try {
     const existingUser = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
@@ -84,7 +86,21 @@ function registerMachine(db: DatabaseSync, body: Record<string, unknown>): strin
         last_seen_ms = 0,
         agent_version = ''
     `).run(machineId, username, hostname, tokenHash(token));
-    db.prepare('DELETE FROM reports WHERE machine_id = ?').run(machineId);
+    if (accountUuid) {
+      const email = typeof body.accountEmail === 'string' && body.accountEmail.length <= 320 ? body.accountEmail : null;
+      db.prepare('INSERT OR IGNORE INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?)').run(accountUuid, email, Date.now());
+      db.prepare(`INSERT INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)
+        ON CONFLICT(account_uuid, machine_id) DO UPDATE SET tracking_since_ms = excluded.tracking_since_ms`)
+        .run(accountUuid, machineId, trackingSinceMs ?? Date.now());
+      const existingAccountUser = db.prepare('SELECT username FROM account_users WHERE account_uuid = ? AND username = ?').get(accountUuid, username);
+      if (!existingAccountUser) {
+        const count = Number((db.prepare('SELECT COUNT(*) AS count FROM account_users WHERE account_uuid = ?').get(accountUuid) as {count:number}).count);
+        const hasManual = Boolean(db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND quota_manual = 1 LIMIT 1').get(accountUuid));
+        if (!hasManual && count > 0) db.prepare('UPDATE account_users SET quota_percent = ?, quota_manual = 0 WHERE account_uuid = ?').run(100 / (count + 1), accountUuid);
+        db.prepare('INSERT INTO account_users(account_uuid, username, quota_percent, quota_manual) VALUES (?, ?, ?, 0)')
+          .run(accountUuid, username, hasManual ? 0 : 100 / (count + 1));
+      }
+    }
     db.exec('COMMIT');
     return token;
   } catch (error) {
@@ -102,21 +118,35 @@ function authorizeMachine(db: DatabaseSync, request: IncomingMessage): { machine
 
 function saveReport(db: DatabaseSync, report: ReportPayload, now: number): string {
   const weekKey = normalizeWeekKey(report.weekResetsAt);
-  const existingAccount = db.prepare("SELECT value FROM settings WHERE key = 'accountUuid'").get() as { value: string } | undefined;
-  if (existingAccount && existingAccount.value !== report.accountUuid) throw new Error('ACCOUNT_CONFLICT');
   db.exec('BEGIN IMMEDIATE');
   try {
-    if (!existingAccount) db.prepare("INSERT INTO settings(key, value) VALUES ('accountUuid', ?)").run(report.accountUuid);
+    const existingAccount = db.prepare('SELECT account_uuid FROM accounts WHERE account_uuid = ?').get(report.accountUuid);
+    db.prepare(`INSERT INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?)
+      ON CONFLICT(account_uuid) DO UPDATE SET email = COALESCE(excluded.email, accounts.email)`)
+      .run(report.accountUuid, report.accountEmail || null, now);
+    const existingMembership = db.prepare('SELECT tracking_since_ms AS trackingSinceMs FROM account_machines WHERE account_uuid = ? AND machine_id = ?').get(report.accountUuid, report.machineId) as { trackingSinceMs: number } | undefined;
+    const periodStart = Date.parse(weekKey) - 7 * 86400_000;
+    const trackingSinceMs = existingMembership?.trackingSinceMs ?? report.trackingSinceMs ?? (existingAccount ? periodStart : now);
+    db.prepare('INSERT OR IGNORE INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)')
+      .run(report.accountUuid, report.machineId, trackingSinceMs);
+    const machineOwner = db.prepare('SELECT username FROM machines WHERE machine_id = ?').get(report.machineId) as { username: string };
+    const accountUserExists = db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND username = ?').get(report.accountUuid, machineOwner.username);
+    if (!accountUserExists) {
+      const count = Number((db.prepare('SELECT COUNT(*) AS count FROM account_users WHERE account_uuid = ?').get(report.accountUuid) as {count:number}).count);
+      const hasManual = Boolean(db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND quota_manual = 1 LIMIT 1').get(report.accountUuid));
+      if (!hasManual && count > 0) db.prepare('UPDATE account_users SET quota_percent = ?, quota_manual = 0 WHERE account_uuid = ?').run(100 / (count + 1), report.accountUuid);
+      db.prepare('INSERT INTO account_users(account_uuid, username, quota_percent, quota_manual) VALUES (?, ?, ?, 0)')
+        .run(report.accountUuid, machineOwner.username, hasManual ? 0 : 100 / (count + 1));
+    }
     db.prepare(`
-      INSERT INTO reports(machine_id, week_key, tokens_json, utilization_json, account_uuid, received_ms)
+      INSERT INTO reports(account_uuid, machine_id, week_key, tokens_json, utilization_json, received_ms)
       VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(machine_id) DO UPDATE SET
+      ON CONFLICT(account_uuid, machine_id) DO UPDATE SET
         week_key = excluded.week_key,
         tokens_json = excluded.tokens_json,
         utilization_json = excluded.utilization_json,
-        account_uuid = excluded.account_uuid,
         received_ms = excluded.received_ms
-    `).run(report.machineId, weekKey, JSON.stringify(report.tokensByModel), JSON.stringify(report.utilization), report.accountUuid, now);
+    `).run(report.accountUuid, report.machineId, weekKey, JSON.stringify(report.tokensByModel), JSON.stringify(report.utilization), now);
     db.prepare('UPDATE machines SET last_seen_ms = ?, agent_version = ? WHERE machine_id = ?')
       .run(now, report.agentVersion, report.machineId);
     db.exec('COMMIT');
@@ -171,6 +201,35 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         const body = await readJson(request) as Record<string, unknown>;
         return sendJson(response, 201, { machineToken: registerMachine(db, body) });
       }
+      if (request.method === 'POST' && url.pathname === '/api/account-tracking') {
+        const machine = authorizeMachine(db, request);
+        if (!machine) return sendJson(response, 401, { error: 'Token máy không hợp lệ.' });
+        const body = await readJson(request) as Record<string, unknown>;
+        const accountUuid = typeof body.accountUuid === 'string' && body.accountUuid.length >= 3 && body.accountUuid.length <= 128 ? body.accountUuid : '';
+        if (!accountUuid) return sendJson(response, 400, { error: 'Account Claude không hợp lệ.' });
+        const owner = db.prepare('SELECT username FROM machines WHERE machine_id = ?').get(machine.machineId) as { username: string };
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const account = db.prepare('SELECT account_uuid FROM accounts WHERE account_uuid = ?').get(accountUuid);
+          const membership = db.prepare('SELECT tracking_since_ms AS trackingSinceMs FROM account_machines WHERE account_uuid = ? AND machine_id = ?').get(accountUuid, machine.machineId) as { trackingSinceMs: number } | undefined;
+          const trackingSinceMs = membership?.trackingSinceMs ?? (account ? 0 : Math.max(0, now() - 60_000));
+          const email = typeof body.accountEmail === 'string' && body.accountEmail.length <= 320 ? body.accountEmail : null;
+          db.prepare('INSERT INTO accounts(account_uuid, email, created_at) VALUES (?, ?, ?) ON CONFLICT(account_uuid) DO UPDATE SET email = COALESCE(excluded.email, accounts.email)')
+            .run(accountUuid, email, now());
+          db.prepare('INSERT OR IGNORE INTO account_machines(account_uuid, machine_id, tracking_since_ms) VALUES (?, ?, ?)')
+            .run(accountUuid, machine.machineId, trackingSinceMs);
+          const accountUserExists = db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND username = ?').get(accountUuid, owner.username);
+          if (!accountUserExists) {
+            const count = Number((db.prepare('SELECT COUNT(*) AS count FROM account_users WHERE account_uuid = ?').get(accountUuid) as {count:number}).count);
+            const hasManual = Boolean(db.prepare('SELECT 1 FROM account_users WHERE account_uuid = ? AND quota_manual = 1 LIMIT 1').get(accountUuid));
+            if (!hasManual && count > 0) db.prepare('UPDATE account_users SET quota_percent = ?, quota_manual = 0 WHERE account_uuid = ?').run(100 / (count + 1), accountUuid);
+            db.prepare('INSERT INTO account_users(account_uuid, username, quota_percent, quota_manual) VALUES (?, ?, ?, 0)')
+              .run(accountUuid, owner.username, hasManual ? 0 : 100 / (count + 1));
+          }
+          db.exec('COMMIT');
+          return sendJson(response, 200, { trackingSinceMs });
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+      }
       if (request.method === 'POST' && url.pathname === '/api/report') {
         const machine = authorizeMachine(db, request);
         if (!machine) return sendJson(response, 401, { error: 'Token máy không hợp lệ.' });
@@ -188,16 +247,23 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         return sendText(response, 200, createInstallScript('macos', config, installOrigin(request)));
       }
       if (request.method === 'GET' && url.pathname === '/api/state') {
-        return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now()));
+        return sendJson(response, 200, computeState(db, config.weights, Boolean(config.telegramToken && config.telegramChatId), now(), url.searchParams.get('account')));
       }
       if (request.method === 'PUT' && url.pathname === '/api/quota') {
-        updateQuotas(db, await readJson(request));
+        updateQuotas(db, await readJson(request), url.searchParams.get('account'));
         return sendJson(response, 200, { ok: true });
       }
       const machineMatch = request.method === 'DELETE' ? url.pathname.match(/^\/api\/machines\/([^/]+)$/) : null;
       if (machineMatch) {
-        const result = db.prepare('DELETE FROM machines WHERE machine_id = ?').run(decodeURIComponent(machineMatch[1]));
+        const machineId = decodeURIComponent(machineMatch[1]);
+        const memberships = db.prepare(`SELECT am.account_uuid AS accountUuid, m.username FROM account_machines am
+          JOIN machines m ON m.machine_id = am.machine_id WHERE m.machine_id = ?`).all(machineId) as unknown as Array<{accountUuid:string; username:string}>;
+        const result = db.prepare('DELETE FROM machines WHERE machine_id = ?').run(machineId);
         if (result.changes === 0) return sendJson(response, 404, { error: 'Không tìm thấy máy.' });
+        const removeOrphans = db.prepare(`DELETE FROM account_users WHERE account_uuid = ? AND username = ?
+          AND NOT EXISTS (SELECT 1 FROM account_machines am JOIN machines m ON m.machine_id = am.machine_id
+            WHERE am.account_uuid = ? AND m.username = ?)`);
+        for (const item of memberships) removeOrphans.run(item.accountUuid, item.username, item.accountUuid, item.username);
         return sendJson(response, 200, { ok: true });
       }
       if (url.pathname.startsWith('/api/')) return sendJson(response, 404, { error: 'API không tồn tại.' });

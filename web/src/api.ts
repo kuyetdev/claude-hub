@@ -7,12 +7,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body;
 }
 
-export function getState(signal?: AbortSignal): Promise<HubState> {
-  return request('/api/state', { signal });
+export function getState(account?: string | null, signal?: AbortSignal): Promise<HubState> {
+  return request(`/api/state${account ? `?account=${encodeURIComponent(account)}` : ''}`, { signal });
 }
 
-export function saveQuotas(quotas: Record<string, number>): Promise<{ ok: true }> {
-  return request('/api/quota', {
+export function saveQuotas(quotas: Record<string, number>, account?: string | null): Promise<{ ok: true }> {
+  return request(`/api/quota${account ? `?account=${encodeURIComponent(account)}` : ''}`, {
     method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(quotas),
   });
 }

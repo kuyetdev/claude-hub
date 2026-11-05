@@ -27,7 +27,7 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
       <h4>Máy đã đăng ký <span>{user.machines.length}</span></h4>
       {user.machines.length === 0 ? <p className="empty">Chưa có máy.</p> : user.machines.map((machine) => <div className="machine" key={machine.machineId}>
         <span className={`dot ${machine.offline ? 'offline' : ''}`} aria-hidden="true" />
-        <div className="machine-copy"><strong>{machine.hostname}</strong><small>{machine.lastSeenMs ? `Báo lần cuối ${formatTime(machine.lastSeenMs)}` : 'Chưa gửi báo cáo'} · agent {machine.agentVersion || 'chưa rõ'}</small><small className="machine-usage">Ước tính đóng góp: {formatPercent(machine.usedPercent)} tài khoản · {formatPercent(machine.observedSharePercent)} token quan sát</small></div>
+        <div className="machine-copy"><strong>{machine.hostname}</strong><small>{machine.lastSeenMs ? `Báo lần cuối ${formatTime(machine.lastSeenMs)}` : 'Chưa gửi báo cáo'} · agent {machine.agentVersion || 'chưa rõ'}</small><small>Tính token từ {formatTime(machine.trackingSinceMs)}</small><small className="machine-usage">Ước tính đóng góp: {formatPercent(machine.usedPercent)} tài khoản · {formatPercent(machine.observedSharePercent)} token quan sát</small></div>
         <span className={`machine-status ${machine.offline ? 'offline' : ''}`}>{machine.offline ? 'Offline' : 'Online'}</span>
         <button className="icon-button" type="button" disabled={busy} onClick={() => onRemove(machine.machineId, machine.hostname)} aria-label={`Gỡ máy ${machine.hostname}`} title="Gỡ máy">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6m-9 4h12m-10 0 .7 13h6.6L16 7M10 10v7m4-7v7" /></svg>
@@ -47,16 +47,24 @@ export function App() {
   const [showInstaller, setShowInstaller] = useState(false);
   const [installPlatform, setInstallPlatform] = useState<'ubuntu' | 'macos'>('ubuntu');
   const [copied, setCopied] = useState(false);
+  const [selectedAccount, setSelectedAccount] = useState(() => window.localStorage.getItem('claude-hub-account') || '');
 
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const next = await getState();
+      const next = await getState(selectedAccount || null);
       setState(next); setError('');
+      if (!selectedAccount && next.selectedAccountUuid) {
+        setSelectedAccount(next.selectedAccountUuid);
+        window.localStorage.setItem('claude-hub-account', next.selectedAccountUuid);
+      } else if (selectedAccount && next.selectedAccountUuid !== selectedAccount && next.selectedAccountUuid) {
+        setSelectedAccount(next.selectedAccountUuid);
+        window.localStorage.setItem('claude-hub-account', next.selectedAccountUuid);
+      }
       setDraft(Object.fromEntries(next.users.map((user) => [user.username, String(user.quotaPercent)])));
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Không tải được dữ liệu.'); }
     finally { if (!silent) setLoading(false); }
-  }, []);
+  }, [selectedAccount]);
 
   useEffect(() => {
     void refresh();
@@ -85,7 +93,7 @@ export function App() {
     event.preventDefault(); setNotice(''); setError('');
     const quotas = Object.fromEntries(Object.entries(draft).map(([name, value]) => [name, Number(value)]));
     setBusy(true);
-    try { await saveQuotas(quotas); setNotice('Đã lưu phân bổ quota.'); await refresh(true); }
+    try { await saveQuotas(quotas, selectedAccount); setNotice('Đã lưu phân bổ quota.'); await refresh(true); }
     catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được quota.'); }
     finally { setBusy(false); }
   }
@@ -104,6 +112,9 @@ export function App() {
         <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5v-9Z" /><path d="m8.5 10 3.5 2 3.5-2M12 12v4" /></svg></span>
         <div><h1>Claude Hub</h1><p>Hạn mức dùng chung, rõ theo từng người</p></div>
       </div>
+      {state && state.accounts.length > 0 && <label className="account-picker"><span>Tài khoản Claude</span><select aria-label="Chọn tài khoản Claude" value={state.selectedAccountUuid ?? ''} onChange={(event) => { const value = event.target.value; setSelectedAccount(value); window.localStorage.setItem('claude-hub-account', value); }}>
+        {state.accounts.map((account) => <option key={account.accountUuid} value={account.accountUuid}>{account.label}</option>)}
+      </select></label>}
       <button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading || busy}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.2 6.2L4 11m16 2-2.2 4.8A7 7 0 0 1 5.5 15" /></svg>
         {loading ? 'Đang tải…' : 'Làm mới'}
@@ -134,7 +145,7 @@ export function App() {
 
         <section className="install-panel" aria-labelledby="install-title">
           <div className="install-summary">
-            <div><p className="eyebrow">Thiết lập agent</p><h2 id="install-title">Cài máy mới</h2><p>Chạy một lệnh trên máy đang dùng Claude CLI. Script chỉ hỏi username rồi gửi usage ngay.</p></div>
+            <div><p className="eyebrow">Thiết lập agent</p><h2 id="install-title">Cài máy mới</h2><p>Chạy một lệnh trên máy đang dùng Claude CLI. Script hỏi username và account hiện tại đã dùng chung từ trước hay chưa.</p></div>
             <button className="secondary-button" type="button" aria-expanded={showInstaller} aria-controls="install-details" onClick={() => setShowInstaller((value) => !value)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
               {showInstaller ? 'Đóng hướng dẫn' : 'Lấy script cài đặt'}

@@ -4,14 +4,16 @@ import type { ReportPayload, TokenTotals } from '../shared/types.ts';
 
 export interface AgentFileState { size: number; offset: number; ino?: number }
 export interface AgentState {
+  accountUuid?: string;
   weekKey?: string;
   files: Record<string, AgentFileState>;
   seen: string[];
   tokensByModel: Record<string, TokenTotals>;
+  accounts?: Record<string, { weekKey: string; tokensByModel: Record<string, TokenTotals> }>;
 }
 
 interface ClaudeConfig {
-  oauthAccount?: { accountUuid?: unknown };
+  oauthAccount?: { accountUuid?: unknown; email?: unknown; emailAddress?: unknown };
   cachedUsageUtilization?: {
     fetchedAtMs?: unknown;
     utilization?: {
@@ -76,10 +78,14 @@ function canonicalReset(value: string): string {
   return new Date(Math.round(timestamp / 60_000) * 60_000).toISOString();
 }
 
-export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string, rateLimitCachePath?: string): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
+export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string, rateLimitCachePath?: string, trackingSince: number | Record<string, number> = 0): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
   const rawConfig = await readFile(join(claudeHome, '..', '.claude.json'), 'utf8');
   const config = JSON.parse(rawConfig) as ClaudeConfig;
   const accountUuid = config.oauthAccount?.accountUuid;
+  const trackingWasConfigured = typeof trackingSince === 'number' || (typeof accountUuid === 'string' && Object.hasOwn(trackingSince, accountUuid));
+  const trackingSinceMs = typeof trackingSince === 'number' ? trackingSince : (typeof accountUuid === 'string' ? trackingSince[accountUuid] ?? 0 : 0);
+  const accountEmailRaw = config.oauthAccount?.email ?? config.oauthAccount?.emailAddress;
+  const accountEmail = typeof accountEmailRaw === 'string' && accountEmailRaw.length <= 320 ? accountEmailRaw : undefined;
   const cached = config.cachedUsageUtilization;
   let live: RateLimitCache | undefined;
   if (rateLimitCachePath) {
@@ -111,10 +117,24 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
   // so that the persisted weekly accumulator is not cleared when the source switches.
   const accountResetAt = canonicalReset(liveReset ?? week!.resets_at as string);
   const weekKey = tokenResetAt ? new Date(tokenResetAt).toISOString() : accountResetAt;
-  const state = previous.weekKey === weekKey ? structuredClone(previous) : emptyState();
+  const state = structuredClone(previous);
+  state.files ??= {};
+  state.seen ??= [];
+  state.tokensByModel ??= {};
   state.weekKey = weekKey;
+  state.accounts ??= {};
+  const accountState = state.accounts[accountUuid as string] ?? {
+    weekKey,
+    tokensByModel: !previous.accounts && (!previous.accountUuid || previous.accountUuid === accountUuid) && previous.weekKey === weekKey
+      ? structuredClone(previous.tokensByModel) : {},
+  };
+  if (accountState.weekKey !== weekKey) {
+    accountState.weekKey = weekKey;
+    accountState.tokensByModel = {};
+  }
+  state.accounts[accountUuid as string] = accountState;
   const seen = new Set(state.seen);
-  const cutoffMs = Date.parse(weekKey) - 7 * 24 * 60 * 60 * 1000;
+  const cutoffMs = Math.max(Date.parse(weekKey) - 7 * 24 * 60 * 60 * 1000, trackingSinceMs);
 
   for await (const file of glob(join(claudeHome, 'projects', '**', '*.jsonl'))) {
     const info = await stat(file);
@@ -134,16 +154,20 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
       const parsed = parseUsageLine(line, cutoffMs);
       if (!parsed || seen.has(parsed.id)) continue;
       seen.add(parsed.id);
-      const total = state.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
+      const total = accountState.tokensByModel[parsed.model] ?? { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 };
       addTokens(total, parsed.tokens);
-      state.tokensByModel[parsed.model] = total;
+      accountState.tokensByModel[parsed.model] = total;
     }
     state.files[file] = { size: info.size, offset: info.size - Buffer.byteLength(trailing), ino: info.ino };
   }
   state.seen = [...seen];
+  state.accountUuid = accountUuid as string;
+  state.tokensByModel = structuredClone(accountState.tokensByModel);
   return {
     payload: {
       accountUuid,
+      ...(accountEmail ? { accountEmail } : {}),
+      ...(trackingWasConfigured ? { trackingSinceMs } : {}),
       weekResetsAt: weekKey,
       utilization: {
         weeklyPercent,
@@ -151,7 +175,7 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
         fiveHourPercent: useLiveRateLimits && typeof live?.fiveHour?.usedPercentage === 'number' ? live.fiveHour.usedPercentage : typeof cached?.utilization?.five_hour?.utilization === 'number' ? cached.utilization.five_hour.utilization : null,
         accountResetsAt: accountResetAt,
       },
-      tokensByModel: state.tokensByModel,
+      tokensByModel: accountState.tokensByModel,
     },
     state,
   };

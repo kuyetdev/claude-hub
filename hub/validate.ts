@@ -18,6 +18,8 @@ export function isReport(value: unknown): value is ReportPayload {
   const item = value as Record<string, unknown>;
   const utilization = item.utilization as Record<string, unknown> | undefined;
   if (!UUID_RE.test(String(item.machineId)) || typeof item.accountUuid !== 'string' || item.accountUuid.length < 3 || item.accountUuid.length > 128) return false;
+  if (item.accountEmail !== undefined && (typeof item.accountEmail !== 'string' || item.accountEmail.length > 320)) return false;
+  if (item.trackingSinceMs !== undefined && !finite(item.trackingSinceMs)) return false;
   if (typeof item.weekResetsAt !== 'string' || !Number.isFinite(Date.parse(item.weekResetsAt))) return false;
   if (!utilization || !finite(utilization.weeklyPercent) || !finite(utilization.fetchedAtMs) || !(utilization.fiveHourPercent === null || finite(utilization.fiveHourPercent))) return false;
   if (!item.tokensByModel || typeof item.tokensByModel !== 'object' || Array.isArray(item.tokensByModel)) return false;

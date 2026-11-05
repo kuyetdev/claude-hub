@@ -8,6 +8,7 @@ interface ReportRow {
   hostname: string;
   lastSeenMs: number;
   agentVersion: string;
+  trackingSinceMs: number;
   quotaPercent: number;
   weekKey: string | null;
   tokensJson: string | null;
@@ -28,24 +29,32 @@ function parseJson<T>(value: string | null, fallback: T): T {
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
-export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now()): HubState {
-  const week = db.prepare('SELECT week_key AS weekKey FROM reports ORDER BY week_key DESC LIMIT 1').get() as { weekKey: string } | undefined;
+export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now(), requestedAccount?: string | null): HubState {
+  const accounts = db.prepare(`SELECT a.account_uuid AS accountUuid, a.email,
+      (SELECT r.week_key FROM reports r WHERE r.account_uuid = a.account_uuid ORDER BY r.received_ms DESC LIMIT 1) AS resetAt
+    FROM accounts a ORDER BY COALESCE((SELECT MAX(r.received_ms) FROM reports r WHERE r.account_uuid = a.account_uuid), a.created_at) DESC, a.account_uuid`).all() as unknown as Array<{accountUuid:string; email:string|null; resetAt:string|null}>;
+  const selectedAccountUuid = accounts.some((account) => account.accountUuid === requestedAccount)
+    ? requestedAccount! : (accounts[0]?.accountUuid ?? null);
+  const week = selectedAccountUuid ? db.prepare('SELECT week_key AS weekKey FROM reports WHERE account_uuid = ? ORDER BY week_key DESC LIMIT 1').get(selectedAccountUuid) as { weekKey: string } | undefined : undefined;
   const weekKey = week ? normalizeWeekKey(week.weekKey) : null;
   let latest: Utilization | undefined;
-  const utilizationRows = db.prepare('SELECT utilization_json AS utilizationJson FROM reports').all() as unknown as Array<{ utilizationJson: string }>;
+  const utilizationRows = selectedAccountUuid ? db.prepare('SELECT utilization_json AS utilizationJson FROM reports WHERE account_uuid = ?').all(selectedAccountUuid) as unknown as Array<{ utilizationJson: string }> : [];
   for (const row of utilizationRows) {
     const utilization = parseJson<Utilization | undefined>(row.utilizationJson, undefined);
     if (utilization && (!latest || utilization.fetchedAtMs > latest.fetchedAtMs)) latest = utilization;
   }
   const rows = db.prepare(`
-    SELECT u.username, u.quota_percent AS quotaPercent,
+    SELECT u.username, au.quota_percent AS quotaPercent,
       m.machine_id AS machineId, m.hostname, m.last_seen_ms AS lastSeenMs, m.agent_version AS agentVersion,
+      am.tracking_since_ms AS trackingSinceMs,
       r.week_key AS weekKey, r.tokens_json AS tokensJson, r.utilization_json AS utilizationJson
-    FROM users u
-    LEFT JOIN machines m ON m.username = u.username
-    LEFT JOIN reports r ON r.machine_id = m.machine_id
+    FROM account_users au
+    JOIN users u ON u.username = au.username AND au.account_uuid = ?
+    JOIN machines m ON m.username = u.username
+    JOIN account_machines am ON am.machine_id = m.machine_id AND am.account_uuid = ?
+    LEFT JOIN reports r ON r.machine_id = m.machine_id AND r.account_uuid = am.account_uuid
     ORDER BY u.username, m.hostname
-  `).all() as unknown as ReportRow[];
+  `).all(selectedAccountUuid ?? '', selectedAccountUuid ?? '') as unknown as ReportRow[];
   const byUser = new Map<string, UserState>();
   for (const row of rows) {
     let user = byUser.get(row.username);
@@ -60,6 +69,7 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
         machineId: row.machineId, hostname: row.hostname, lastSeenMs: row.lastSeenMs,
         agentVersion: row.agentVersion, offline: row.lastSeenMs === 0 || now - row.lastSeenMs > 30 * 60_000,
         weightedTokens: machineWeighted, usedPercent: 0, observedSharePercent: 0,
+        trackingSinceMs: Math.max(Date.parse(weekKey ?? new Date(now).toISOString()) - 7 * 86400_000, row.trackingSinceMs),
       });
       user.weightedTokens += machineWeighted;
     }
@@ -78,6 +88,8 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   }
   const quotaTotal = users.reduce((sum, user) => sum + user.quotaPercent, 0);
   return {
+    accounts: accounts.map((account) => ({ ...account, label: account.email || account.accountUuid })),
+    selectedAccountUuid,
     weekKey,
     resetAt: weekKey,
     accountResetAt: latest?.accountResetsAt ?? weekKey,
@@ -92,10 +104,12 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   };
 }
 
-export function updateQuotas(db: DatabaseSync, value: unknown): void {
+export function updateQuotas(db: DatabaseSync, value: unknown, accountUuid?: string | null): void {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('INVALID_QUOTA');
   const quotas = value as Record<string, unknown>;
-  const users = (db.prepare('SELECT username FROM users ORDER BY username').all() as unknown as Array<{ username: string }>).map((item) => item.username);
+  const users = (accountUuid && db.prepare('SELECT 1 FROM accounts WHERE account_uuid = ?').get(accountUuid))
+    ? (db.prepare('SELECT username FROM account_users WHERE account_uuid = ? ORDER BY username').all(accountUuid) as unknown as Array<{ username: string }>).map((item) => item.username)
+    : (db.prepare('SELECT username FROM users ORDER BY username').all() as unknown as Array<{ username: string }>).map((item) => item.username);
   const keys = Object.keys(quotas).sort();
   if (keys.length !== users.length || keys.some((key, index) => key !== users[index])) throw new Error('QUOTA_USERS_MISMATCH');
   const values = keys.map((key) => quotas[key]);
@@ -104,8 +118,13 @@ export function updateQuotas(db: DatabaseSync, value: unknown): void {
   if (Math.abs(total - 100) > 0.01) throw new Error('QUOTA_TOTAL');
   db.exec('BEGIN IMMEDIATE');
   try {
-    const update = db.prepare('UPDATE users SET quota_percent = ?, quota_manual = 1 WHERE username = ?');
-    for (const username of keys) update.run(quotas[username] as number, username);
+    if (accountUuid && db.prepare('SELECT 1 FROM accounts WHERE account_uuid = ?').get(accountUuid)) {
+      const update = db.prepare('UPDATE account_users SET quota_percent = ?, quota_manual = 1 WHERE account_uuid = ? AND username = ?');
+      for (const username of keys) update.run(quotas[username] as number, accountUuid, username);
+    } else {
+      const update = db.prepare('UPDATE users SET quota_percent = ?, quota_manual = 1 WHERE username = ?');
+      for (const username of keys) update.run(quotas[username] as number, username);
+    }
     db.exec('COMMIT');
   } catch (error) { db.exec('ROLLBACK'); throw error; }
 }

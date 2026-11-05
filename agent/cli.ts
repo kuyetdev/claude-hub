@@ -16,7 +16,7 @@ const STATE_PATH = join(homedir(), '.claude-storage-agent.state.json');
 const RATE_LIMIT_PATH = join(homedir(), '.claude-storage-agent.rate-limits.json');
 const STATUS_LINE_CONFIG_PATH = join(homedir(), '.claude-storage-agent.statusline.json');
 
-interface AgentConfig { hub: string; username: string; machineId: string; machineToken: string }
+interface AgentConfig { hub: string; username: string; machineId: string; machineToken: string; accountTrackingSince?: Record<string, number> }
 
 async function readJson<T>(path: string): Promise<T | undefined> {
   try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch (error) {
@@ -58,12 +58,25 @@ async function register(args: string[]): Promise<void> {
     if (!USERNAME_RE.test(username)) console.info('Username không hợp lệ, vui lòng nhập lại.');
   }
   const machineId = existing?.machineId ?? randomUUID();
+  const accountTrackingSince = { ...(existing?.accountTrackingSince ?? {}) };
+  let currentAccountUuid: string | undefined;
+  try {
+    const claudeConfig = JSON.parse(await readFile(join(homedir(), '.claude.json'), 'utf8')) as { oauthAccount?: { accountUuid?: unknown } };
+    const accountUuid = claudeConfig.oauthAccount?.accountUuid;
+    if (typeof accountUuid === 'string' && accountUuid.length >= 3) {
+      currentAccountUuid = accountUuid;
+      if (!Object.hasOwn(accountTrackingSince, accountUuid)) {
+        const answer = (await question('Đã dùng account Claude hiện tại trong kỳ tuần này trước khi vào Hub? [Y/n] ')).toLowerCase();
+        accountTrackingSince[accountUuid] = ['n', 'no', 'không', 'khong'].includes(answer) ? Date.now() : 0;
+      }
+    }
+  } catch { /* First report will initialize tracking for accounts not present locally yet. */ }
   let response: Response;
   try {
     response = await fetch(`${hub}/api/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username, machineId, hostname: hostname() }),
+      body: JSON.stringify({ username, machineId, hostname: hostname(), accountUuid: currentAccountUuid, trackingSinceMs: currentAccountUuid ? accountTrackingSince[currentAccountUuid] : undefined }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (error) {
@@ -73,12 +86,12 @@ async function register(args: string[]): Promise<void> {
   if (!response.ok) throw new Error(`Hub từ chối đăng ký (HTTP ${response.status}).`);
   const result = await response.json() as { machineToken?: unknown };
   if (typeof result.machineToken !== 'string' || result.machineToken.length < 32) throw new Error('Hub trả về dữ liệu không hợp lệ.');
-  await writePrivateJson(CONFIG_PATH, { hub, username, machineId, machineToken: result.machineToken });
+  await writePrivateJson(CONFIG_PATH, { hub, username, machineId, machineToken: result.machineToken, accountTrackingSince });
   console.info(`Đã đăng ký máy cho ${username}.`);
 }
 
 export async function buildReport(config: AgentConfig, state: AgentState, claudeHome = join(homedir(), '.claude'), now = Date.now(), rateLimitCachePath = RATE_LIMIT_PATH) {
-  const scanned = await scanClaudeHome(claudeHome, state, now, undefined, rateLimitCachePath);
+  const scanned = await scanClaudeHome(claudeHome, state, now, undefined, rateLimitCachePath, config.accountTrackingSince ?? 0);
   return {
     payload: { machineId: config.machineId, ...scanned.payload, agentVersion: VERSION, sentAtMs: now },
     state: scanned.state,
@@ -93,6 +106,20 @@ async function report(args: string[] = []): Promise<void> {
   if (!config) throw new Error('Máy chưa đăng ký. Hãy chạy lệnh register trước.');
   const state = await readJson<AgentState>(STATE_PATH) ?? emptyState();
   const now = Date.now();
+  const claudeConfig = await readJson<{ oauthAccount?: { accountUuid?: unknown; email?: unknown; emailAddress?: unknown } }>(join(homedir(), '.claude.json'));
+  const accountUuid = claudeConfig?.oauthAccount?.accountUuid;
+  if (typeof accountUuid !== 'string' || accountUuid.length < 3) throw new Error('Không tìm thấy accountUuid trong ~/.claude.json.');
+  const rawEmail = claudeConfig?.oauthAccount?.email ?? claudeConfig?.oauthAccount?.emailAddress;
+  const trackingResponse = await fetch(`${config.hub}/api/account-tracking`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.machineToken}` },
+    body: JSON.stringify({ accountUuid, ...(typeof rawEmail === 'string' ? { accountEmail: rawEmail } : {}) }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!trackingResponse.ok) throw new Error(`Hub từ chối cập nhật account (HTTP ${trackingResponse.status}).`);
+  const tracking = await trackingResponse.json() as { trackingSinceMs?: unknown };
+  if (typeof tracking.trackingSinceMs !== 'number' || !Number.isFinite(tracking.trackingSinceMs)) throw new Error('Hub trả về mốc theo dõi không hợp lệ.');
+  config.accountTrackingSince = { ...(config.accountTrackingSince ?? {}), [accountUuid]: tracking.trackingSinceMs };
+  await writePrivateJson(CONFIG_PATH, config);
   const result = await buildReport(config, state, join(homedir(), '.claude'), now);
   const response = await fetch(`${config.hub}/api/report`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${config.machineToken}` },
