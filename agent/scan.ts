@@ -81,15 +81,20 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
+  const week = cached?.utilization?.seven_day;
   const liveFetchedAt = typeof live?.fetchedAtMs === 'number' ? live.fetchedAtMs : undefined;
   const liveIsCurrent = liveFetchedAt !== undefined && liveFetchedAt <= now + 60_000 && liveFetchedAt >= now - 24 * 60 * 60 * 1000;
+  const cachedFetchedAt = typeof cached?.fetchedAtMs === 'number' ? cached.fetchedAtMs : undefined;
+  const cachedWeekly = typeof week?.utilization === 'number' ? week.utilization : undefined;
   const liveWeekly = liveIsCurrent && typeof live?.sevenDay?.usedPercentage === 'number' ? live.sevenDay.usedPercentage : undefined;
-  const useLiveRateLimits = liveWeekly !== undefined;
-  const liveReset = useLiveRateLimits ? resetIso(live?.sevenDay?.resetsAt) : undefined;
-  const week = cached?.utilization?.seven_day;
+  const useLiveRateLimits = liveWeekly !== undefined && (cachedFetchedAt === undefined || liveFetchedAt! >= cachedFetchedAt);
+  const weeklyPercent = useLiveRateLimits ? liveWeekly : cachedWeekly;
+  const utilizationFetchedAt = useLiveRateLimits ? liveFetchedAt : cachedFetchedAt;
+  const liveAccountReset = useLiveRateLimits ? resetIso(live?.sevenDay?.resetsAt) : undefined;
   if (typeof accountUuid !== 'string' || accountUuid.length < 3) throw new Error('Không tìm thấy accountUuid trong ~/.claude.json.');
+  const liveReset = liveAccountReset;
   if (!liveReset && (typeof week?.resets_at !== 'string' || !Number.isFinite(Date.parse(week.resets_at)))) throw new Error('Không tìm thấy giờ reset tuần trong ~/.claude.json.');
-  if (liveWeekly === undefined && (typeof week?.utilization !== 'number' || typeof cached?.fetchedAtMs !== 'number')) throw new Error('Không tìm thấy số liệu usage tuần trong ~/.claude.json.');
+  if (weeklyPercent === undefined || utilizationFetchedAt === undefined) throw new Error('Không tìm thấy số liệu usage tuần trong ~/.claude.json.');
 
   const accountResetAt = liveReset ?? new Date(week!.resets_at as string).toISOString();
   const weekKey = tokenResetAt ? new Date(tokenResetAt).toISOString() : accountResetAt;
@@ -128,8 +133,8 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
       accountUuid,
       weekResetsAt: weekKey,
       utilization: {
-        weeklyPercent: liveWeekly ?? week!.utilization as number,
-        fetchedAtMs: useLiveRateLimits ? liveFetchedAt! : cached!.fetchedAtMs as number,
+        weeklyPercent,
+        fetchedAtMs: utilizationFetchedAt,
         fiveHourPercent: useLiveRateLimits && typeof live?.fiveHour?.usedPercentage === 'number' ? live.fiveHour.usedPercentage : typeof cached?.utilization?.five_hour?.utilization === 'number' ? cached.utilization.five_hour.utilization : null,
         accountResetsAt: accountResetAt,
       },

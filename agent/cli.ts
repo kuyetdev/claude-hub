@@ -85,7 +85,10 @@ export async function buildReport(config: AgentConfig, state: AgentState, claude
   };
 }
 
-async function report(): Promise<void> {
+async function report(args: string[] = []): Promise<void> {
+  const settleIndex = args.indexOf('--settle-ms');
+  const settleMs = settleIndex >= 0 ? Number(args[settleIndex + 1]) : 0;
+  if (Number.isFinite(settleMs) && settleMs > 0) await new Promise((resolveDelay) => setTimeout(resolveDelay, Math.min(settleMs, 10_000)));
   const config = await readJson<AgentConfig>(CONFIG_PATH);
   if (!config) throw new Error('Máy chưa đăng ký. Hãy chạy lệnh register trước.');
   const state = await readJson<AgentState>(STATE_PATH) ?? emptyState();
@@ -110,7 +113,8 @@ async function installHook(args: string[]): Promise<void> {
   const command = commandIndex >= 0 ? args[commandIndex + 1] : `node ${JSON.stringify(resolve(process.argv[1]))} report`;
   if (!command) throw new Error('Thiếu command cho hook.');
   const statusLineCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(resolve(process.argv[1]))} statusline`;
-  await installClaudeHook(join(homedir(), '.claude', 'settings.json'), command, { command: statusLineCommand, configPath: STATUS_LINE_CONFIG_PATH });
+  const reportCommand = `${command} --settle-ms 2500`;
+  await installClaudeHook(join(homedir(), '.claude', 'settings.json'), reportCommand, { command: statusLineCommand, configPath: STATUS_LINE_CONFIG_PATH });
   console.info('Đã cài statusLine + hook Stop. Quota được ghi từ response và gửi khi mỗi lượt chat hoàn tất.');
 }
 
@@ -149,7 +153,7 @@ async function statusline(): Promise<void> {
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'register') return register(args);
-  if (command === 'report') return report();
+  if (command === 'report') return report(args);
   if (command === 'print-hook') return printHook();
   if (command === 'install-hook') return installHook(args);
   if (command === 'statusline') return statusline();
