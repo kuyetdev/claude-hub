@@ -45,6 +45,7 @@ function parseUsageLine(line: string, cutoffMs: number): { id: string; model: st
     const messageId = typeof message.id === 'string' ? message.id : '';
     const requestId = typeof item.requestId === 'string' ? item.requestId : '';
     if (!messageId || !requestId || typeof message.model !== 'string' || !message.model) return undefined;
+    if (!message.model.startsWith('claude-') && message.model !== '<synthetic>') return undefined;
     return {
       id: `${messageId}\u0000${requestId}`,
       model: message.model.slice(0, 128),

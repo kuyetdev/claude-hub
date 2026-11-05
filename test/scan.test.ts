@@ -19,12 +19,19 @@ async function fakeClaudeHome() {
   return { home, claude, file: join(project, 'agent.jsonl') };
 }
 
-function line(id: string, requestId: string, input: number, extra: Record<string, unknown> = {}) {
+function line(id: string, requestId: string, input: number, extra: Record<string, unknown> = {}, model = 'claude-test') {
   return JSON.stringify({
     ...extra, requestId, timestamp: '2026-11-04T10:00:00Z', cwd: '/duong/dan/bi-mat',
-    message: { id, model: 'claude-test', content: 'prompt tuyệt mật', usage: { input_tokens: input, output_tokens: 2, cache_creation_input_tokens: 3, cache_read_input_tokens: 4 } },
+    message: { id, model, content: 'prompt tuyệt mật', usage: { input_tokens: input, output_tokens: 2, cache_creation_input_tokens: 3, cache_read_input_tokens: 4 } },
   });
 }
+
+test('bỏ qua token từ model không thuộc Anthropic', async () => {
+  const fixture = await fakeClaudeHome();
+  await writeFile(fixture.file, `${line('glm1', 'glm-request-1', 100, {}, 'glm-5.3:pre')}\n`);
+  const result = await scanClaudeHome(fixture.claude, emptyState());
+  assert.deepEqual(result.payload.tokensByModel, {});
+});
 
 test('quét JSONL khử trùng, đọc tăng dần và không đưa dữ liệu nhạy cảm vào payload', async () => {
   const fixture = await fakeClaudeHome();
