@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { HubState, TokenTotals, UserState, Utilization, WeightConfig } from '../shared/types.ts';
+import { normalizeWeekKey } from './validate.ts';
 
 interface ReportRow {
   username: string;
@@ -29,7 +30,7 @@ function parseJson<T>(value: string | null, fallback: T): T {
 
 export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now()): HubState {
   const week = db.prepare('SELECT week_key AS weekKey FROM reports ORDER BY week_key DESC LIMIT 1').get() as { weekKey: string } | undefined;
-  const weekKey = week?.weekKey ?? null;
+  const weekKey = week ? normalizeWeekKey(week.weekKey) : null;
   let latest: Utilization | undefined;
   const utilizationRows = db.prepare('SELECT utilization_json AS utilizationJson FROM reports').all() as unknown as Array<{ utilizationJson: string }>;
   for (const row of utilizationRows) {
@@ -42,9 +43,9 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
       r.week_key AS weekKey, r.tokens_json AS tokensJson, r.utilization_json AS utilizationJson
     FROM users u
     LEFT JOIN machines m ON m.username = u.username
-    LEFT JOIN reports r ON r.machine_id = m.machine_id AND r.week_key = ?
+    LEFT JOIN reports r ON r.machine_id = m.machine_id
     ORDER BY u.username, m.hostname
-  `).all(weekKey ?? '') as unknown as ReportRow[];
+  `).all() as unknown as ReportRow[];
   const byUser = new Map<string, UserState>();
   for (const row of rows) {
     let user = byUser.get(row.username);
@@ -53,7 +54,8 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
       byUser.set(row.username, user);
     }
     if (row.machineId) {
-      const machineWeighted = row.weekKey === weekKey ? weightedTokens(parseJson(row.tokensJson, {}), weights) : 0;
+      const machineWeekKey = row.weekKey ? normalizeWeekKey(row.weekKey) : null;
+      const machineWeighted = machineWeekKey === weekKey ? weightedTokens(parseJson(row.tokensJson, {}), weights) : 0;
       user.machines.push({
         machineId: row.machineId, hostname: row.hostname, lastSeenMs: row.lastSeenMs,
         agentVersion: row.agentVersion, offline: row.lastSeenMs === 0 || now - row.lastSeenMs > 30 * 60_000,
@@ -61,7 +63,7 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
       });
       user.weightedTokens += machineWeighted;
     }
-    if (row.weekKey !== weekKey) continue;
+    if (!row.weekKey || normalizeWeekKey(row.weekKey) !== weekKey) continue;
   }
   const users = [...byUser.values()];
   const totalWeighted = users.reduce((sum, user) => sum + user.weightedTokens, 0);

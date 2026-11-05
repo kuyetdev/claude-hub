@@ -24,6 +24,24 @@ test('trọng số và phân bổ mức dùng theo bảng giá trị', () => {
   } finally { db.close(); }
 });
 
+test('báo cáo reset lệch vài giây vẫn cộng chung kỳ token', () => {
+  const db = openDatabase(':memory:');
+  try {
+    db.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('alice', 50, 0, 1);
+    db.prepare('INSERT INTO users VALUES (?, ?, ?, ?)').run('bob', 50, 0, 1);
+    db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m1', 'alice', 'a', 'h1', 100, '0.1.0');
+    db.prepare('INSERT INTO machines VALUES (?, ?, ?, ?, ?, ?)').run('m2', 'bob', 'b', 'h2', 100, '0.1.0');
+    const utilization = JSON.stringify({ weeklyPercent: 60, fetchedAtMs: 1000, fiveHourPercent: null });
+    const tokens = (input: number) => JSON.stringify({ x: { input, output: 0, cacheCreation: 0, cacheRead: 0 } });
+    db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run('m1', '2026-11-05T17:00:00.000Z', tokens(3), utilization, 'a', 100);
+    db.prepare('INSERT INTO reports VALUES (?, ?, ?, ?, ?, ?)').run('m2', '2026-11-05T17:00:00.858Z', tokens(1), utilization, 'a', 100);
+    const state = computeState(db, TEST_CONFIG.weights, false, 1000);
+    assert.equal(state.users[0].weightedTokens, 3);
+    assert.equal(state.users[1].weightedTokens, 1);
+    assert.equal(state.users[0].usedPercent + state.users[1].usedPercent, 60);
+  } finally { db.close(); }
+});
+
 test('quota phải đủ người và tổng bằng 100', () => {
   const db = openDatabase(':memory:');
   try {

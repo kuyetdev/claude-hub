@@ -26,5 +26,6 @@ export function isReport(value: unknown): value is ReportPayload {
 }
 
 export function normalizeWeekKey(value: string): string {
-  return new Date(value).toISOString();
+  const timestamp = Date.parse(value);
+  return new Date(Math.round(timestamp / 60_000) * 60_000).toISOString();
 }
