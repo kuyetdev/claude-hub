@@ -150,10 +150,21 @@ export function App() {
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const [pendingAppendOnly, setPendingAppendOnly] = useState<boolean | null>(null);
+  const appendOnlyDialogRef = useRef<HTMLDialogElement>(null);
+  const appendOnlyConfirmRef = useRef<HTMLButtonElement>(null);
   const [showInstaller, setShowInstaller] = useState(false);
   const [installPlatform, setInstallPlatform] = useState<'ubuntu' | 'macos'>('ubuntu');
   const [copied, setCopied] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState(() => window.localStorage.getItem('claude-hub-account') || '');
+
+  useEffect(() => {
+    const dialog = appendOnlyDialogRef.current;
+    if (pendingAppendOnly !== null && dialog && !dialog.open) {
+      dialog.showModal();
+      appendOnlyConfirmRef.current?.focus();
+    } else if (pendingAppendOnly === null && dialog?.open) dialog.close();
+  }, [pendingAppendOnly]);
 
   const refresh = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -234,10 +245,12 @@ export function App() {
     finally { setBusy(false); }
   }
 
-  async function changeAppendOnly(enabled: boolean) {
+  async function confirmAppendOnlyChange() {
+    if (pendingAppendOnly === null) return;
+    const enabled = pendingAppendOnly;
     setBusy(true); setError(''); setNotice('');
-    try { await setAppendOnlyUsage(enabled); setNotice(enabled ? 'Đã bật chế độ chỉ cộng usage.' : 'Đã tắt chế độ chỉ cộng usage.'); await refresh(true); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : 'Không lưu được cài đặt.'); }
+    try { await setAppendOnlyUsage(enabled); setPendingAppendOnly(null); setNotice(enabled ? 'Đã bật chế độ chỉ cộng usage.' : 'Đã tắt chế độ chỉ cộng usage.'); await refresh(true); }
+    catch (reason) { setPendingAppendOnly(null); setError(reason instanceof Error ? reason.message : 'Không lưu được cài đặt.'); }
     finally { setBusy(false); }
   }
 
@@ -339,12 +352,26 @@ export function App() {
 
         <details className="admin-panel data-policy">
           <summary><span><span className="eyebrow">Cài đặt dữ liệu nâng cao</span><strong>Chế độ lưu usage</strong></span></summary>
-          <label className="append-only-setting"><input type="checkbox" checked={state.usageAppendOnly} disabled={busy} onChange={(event) => void changeAppendOnly(event.target.checked)} /><span><strong>Chỉ cộng usage, không giảm số đã lưu</strong><small>Khi bật, report mới chỉ làm tổng token tăng trong cùng kỳ reset. Nếu agent gửi số thấp hơn, Hub giữ số cao đã có. Kỳ mới sẽ bắt đầu lại.</small></span></label>
+          <div className="append-only-setting">
+            <span className="append-only-copy"><strong>Chỉ cộng usage, không giảm số đã lưu</strong><small id="append-only-description">Khi bật, report mới chỉ làm tổng token tăng trong cùng kỳ reset. Nếu agent gửi số thấp hơn, Hub giữ số cao đã có. Kỳ mới sẽ bắt đầu lại.</small></span>
+            <button className={`setting-switch ${state.usageAppendOnly ? 'on' : ''}`} type="button" role="switch" aria-checked={state.usageAppendOnly} aria-label="Chỉ cộng usage, không giảm số đã lưu" aria-describedby="append-only-description" disabled={busy} onClick={() => setPendingAppendOnly(!state.usageAppendOnly)}><span /></button>
+          </div>
         </details>
 
       </>}
       {!state && loading && <div className="loading-card" role="status">Đang tải dữ liệu từ hub…</div>}
     </main>
     <footer><span>Telegram: {state?.telegramConfigured ? 'đã cấu hình' : 'chưa cấu hình'}</span><span>Hub chỉ cảnh báo, không chặn sử dụng.</span></footer>
+    <dialog className="confirm-dialog" ref={appendOnlyDialogRef} aria-labelledby="append-only-confirm-title" onCancel={(event) => { event.preventDefault(); setPendingAppendOnly(null); }}>
+      <p className="eyebrow">Xác nhận thay đổi</p>
+      <h2 id="append-only-confirm-title">{pendingAppendOnly ? 'Bật chế độ chỉ cộng usage?' : 'Tắt chế độ chỉ cộng usage?'}</h2>
+      <p>{pendingAppendOnly
+        ? 'Hub sẽ giữ số token đã lưu nếu report mới thấp hơn. Tổng usage chỉ bắt đầu lại ở kỳ reset tiếp theo.'
+        : 'Các report tiếp theo có thể thay số đã lưu bằng số thấp hơn, khiến usage hiển thị giảm.'}</p>
+      <div className="confirm-actions">
+        <button className="secondary-button" type="button" disabled={busy} onClick={() => setPendingAppendOnly(null)}>Hủy</button>
+        <button ref={appendOnlyConfirmRef} className={`primary-button ${pendingAppendOnly ? '' : 'danger-button'}`} type="button" disabled={busy} onClick={() => void confirmAppendOnlyChange()}>{busy ? 'Đang lưu…' : pendingAppendOnly ? 'Bật chế độ' : 'Tắt chế độ'}</button>
+      </div>
+    </dialog>
   </div>;
 }

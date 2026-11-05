@@ -85,10 +85,24 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .data-policy > summary > span { display: inline-flex; flex-direction: column; gap: 3px; vertical-align: middle; }
 .data-policy > summary .eyebrow { margin: 0; }
 .data-policy[open] > summary { border-bottom: 1px solid var(--border); }
-.append-only-setting { display: flex; align-items: flex-start; gap: 12px; padding: 20px 22px; cursor: pointer; }
-.append-only-setting input { width: 18px; height: 18px; flex: 0 0 18px; margin: 2px 0 0; accent-color: var(--accent); }
-.append-only-setting span, .append-only-setting small { display: block; }
-.append-only-setting small { margin-top: 4px; color: var(--muted); line-height: 1.5; }
+.append-only-setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 22px; }
+.append-only-copy { min-width: 0; }
+.append-only-copy, .append-only-copy small { display: block; }
+.append-only-copy small { margin-top: 4px; color: var(--muted); line-height: 1.5; }
+.setting-switch { position: relative; width: 52px; height: 30px; flex: 0 0 52px; padding: 3px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-alt); cursor: pointer; transition: background-color .16s ease, border-color .16s ease; }
+.setting-switch span { display: block; width: 22px; height: 22px; border-radius: 50%; background: var(--muted); box-shadow: 0 1px 3px rgb(0 0 0 / .25); transition: transform .16s ease, background-color .16s ease; }
+.setting-switch.on { background: var(--accent); border-color: var(--accent); }
+.setting-switch.on span { transform: translateX(22px); background: white; }
+.setting-switch:focus-visible { outline: 3px solid color-mix(in srgb, var(--ring) 65%, transparent); outline-offset: 2px; }
+.setting-switch:disabled { opacity: .6; cursor: wait; }
+.confirm-dialog { width: min(440px, calc(100vw - 32px)); margin: auto; padding: 24px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--shadow); }
+.confirm-dialog::backdrop { background: rgb(3 9 10 / .72); backdrop-filter: blur(3px); }
+.confirm-dialog .eyebrow { margin: 0 0 8px; }
+.confirm-dialog h2 { margin: 0; font-size: 20px; }
+.confirm-dialog > p:not(.eyebrow) { margin: 10px 0 22px; color: var(--muted); line-height: 1.55; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.danger-button { background: var(--danger); border-color: var(--danger); }
+.danger-button:hover { background: color-mix(in srgb, var(--danger) 82%, black); }
 .user-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
 .user-head h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
 .usage-value { margin: 3px 0 15px; font-size: 25px; font-weight: 680; letter-spacing: -.03em; }
