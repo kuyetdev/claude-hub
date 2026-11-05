@@ -66,7 +66,11 @@ export class TelegramAlerts {
     try {
       const response = await this.fetchImpl(`https://api.telegram.org/bot${this.config.telegramToken}/sendMessage`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ chat_id: this.config.telegramChatId, text }), signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({
+          chat_id: this.config.telegramChatId,
+          text,
+          ...(this.config.telegramMessageThreadId === undefined ? {} : { message_thread_id: this.config.telegramMessageThreadId }),
+        }), signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) console.error(`Gửi cảnh báo Telegram thất bại (HTTP ${response.status}).`);
       return response.ok;

@@ -17,6 +17,7 @@ export interface HubConfig {
   timezone: string;
   telegramToken?: string;
   telegramChatId?: string;
+  telegramMessageThreadId?: number;
   weights: WeightConfig;
 }
 
@@ -25,6 +26,8 @@ export function loadConfig(env = process.env): HubConfig {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('HUB_PORT không hợp lệ.');
   const timezone = env.HUB_TZ ?? 'Asia/Ho_Chi_Minh';
   try { new Intl.DateTimeFormat('vi-VN', { timeZone: timezone }); } catch { throw new Error('HUB_TZ không hợp lệ.'); }
+  const telegramMessageThreadId = env.TELEGRAM_MESSAGE_THREAD_ID ? Number(env.TELEGRAM_MESSAGE_THREAD_ID) : undefined;
+  if (telegramMessageThreadId !== undefined && (!Number.isInteger(telegramMessageThreadId) || telegramMessageThreadId < 0)) throw new Error('TELEGRAM_MESSAGE_THREAD_ID không hợp lệ.');
   return {
     host: env.HUB_HOST ?? '127.0.0.1',
     port,
@@ -33,6 +36,7 @@ export function loadConfig(env = process.env): HubConfig {
     timezone,
     telegramToken: env.TELEGRAM_BOT_TOKEN || undefined,
     telegramChatId: env.TELEGRAM_CHAT_ID || undefined,
+    telegramMessageThreadId,
     weights: {
       input: positiveNumber(env, 'HUB_WEIGHT_INPUT', 1),
       output: positiveNumber(env, 'HUB_WEIGHT_OUTPUT', 5),
