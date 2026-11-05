@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HubState, UserState } from '../../shared/types.ts';
 import { getState, removeMachine, saveQuotas } from './api.ts';
 
@@ -25,6 +25,83 @@ function statusClass(ratio: number): string { return ratio >= 100 ? 'danger' : r
 function Progress({ value, label, ratio = value }: { value: number; label: string; ratio?: number }) {
   return <div className="progress" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(ratio)}>
     <span className={statusClass(ratio)} style={{ transform: `scaleX(${Math.min(Math.max(ratio, 0), 100) / 100})` }} />
+  </div>;
+}
+
+function AccountPicker({ accounts, selected, onChange }: {
+  accounts: HubState['accounts']; selected: string | null; onChange: (account: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const selectedIndex = Math.max(0, accounts.findIndex((account) => account.accountUuid === selected));
+  const active = accounts[activeIndex] ?? accounts[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.focus();
+    document.getElementById(`account-option-${active?.accountUuid}`)?.scrollIntoView({ block: 'nearest' });
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, [open, active?.accountUuid]);
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') {
+      event.preventDefault(); setOpen(false); triggerRef.current?.focus();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      setActiveIndex((current) => (current + (event.key === 'ArrowDown' ? 1 : -1) + accounts.length) % accounts.length);
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault(); setActiveIndex(event.key === 'Home' ? 0 : accounts.length - 1);
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (active) { onChange(active.accountUuid); setOpen(false); triggerRef.current?.focus(); }
+    }
+  }
+
+  return <div className="account-picker" ref={rootRef}>
+    <span id="account-picker-label">Tài khoản Claude</span>
+    <button
+      ref={triggerRef}
+      className="account-picker-trigger"
+      type="button"
+      aria-labelledby="account-picker-label account-picker-value"
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-controls="account-picker-list"
+      onClick={() => { setActiveIndex(selectedIndex); setOpen((current) => !current); }}
+    >
+      <span id="account-picker-value" className="account-picker-value">{accounts[selectedIndex]?.label ?? 'Chọn tài khoản'}</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5" /></svg>
+    </button>
+    {open && <div
+      className="account-picker-menu"
+      id="account-picker-list"
+      ref={listRef}
+      role="listbox"
+      aria-labelledby="account-picker-label"
+      aria-activedescendant={active ? `account-option-${active.accountUuid}` : undefined}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
+      {accounts.map((account, index) => <div
+        className={`account-picker-option ${account.accountUuid === selected ? 'selected' : ''} ${index === activeIndex ? 'active' : ''}`}
+        id={`account-option-${account.accountUuid}`}
+        key={account.accountUuid}
+        role="option"
+        aria-selected={account.accountUuid === selected}
+        onMouseEnter={() => setActiveIndex(index)}
+        onClick={() => { onChange(account.accountUuid); setOpen(false); triggerRef.current?.focus(); }}
+      >
+        <span className="account-option-check" aria-hidden="true">{account.accountUuid === selected ? '✓' : ''}</span>
+        <span className="account-option-label" title={account.label}>{account.label}</span>
+      </div>)}
+    </div>}
   </div>;
 }
 
@@ -132,15 +209,18 @@ export function App() {
     finally { setBusy(false); }
   }
 
+  function selectAccount(value: string) {
+    setSelectedAccount(value);
+    window.localStorage.setItem('claude-hub-account', value);
+  }
+
   return <div className="app-shell">
     <header className="topbar">
       <div className="brand">
         <span className="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 7.5 12 3l7 4.5v9L12 21l-7-4.5v-9Z" /><path d="m8.5 10 3.5 2 3.5-2M12 12v4" /></svg></span>
         <div><h1>Claude Hub</h1><p>Hạn mức dùng chung, rõ theo từng người</p></div>
       </div>
-      {state && state.accounts.length > 0 && <label className="account-picker"><span>Tài khoản Claude</span><select aria-label="Chọn tài khoản Claude" value={state.selectedAccountUuid ?? ''} onChange={(event) => { const value = event.target.value; setSelectedAccount(value); window.localStorage.setItem('claude-hub-account', value); }}>
-        {state.accounts.map((account) => <option key={account.accountUuid} value={account.accountUuid}>{account.label}</option>)}
-      </select></label>}
+      {state && state.accounts.length > 0 && <AccountPicker accounts={state.accounts} selected={state.selectedAccountUuid} onChange={selectAccount} />}
       <button className="secondary-button" type="button" onClick={() => void refresh()} disabled={loading || busy}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6v5h-5M4 18v-5h5M18.5 9A7 7 0 0 0 6.2 6.2L4 11m16 2-2.2 4.8A7 7 0 0 1 5.5 15" /></svg>
         {loading ? 'Đang tải…' : 'Làm mới'}
