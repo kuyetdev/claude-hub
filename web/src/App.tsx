@@ -145,7 +145,7 @@ export function App() {
 
         <section className="install-panel" aria-labelledby="install-title">
           <div className="install-summary">
-            <div><p className="eyebrow">Thiết lập agent</p><h2 id="install-title">Cài máy mới</h2><p>Chạy một lệnh trên máy đang dùng Claude CLI. Script hỏi username và account hiện tại đã dùng chung từ trước hay chưa.</p></div>
+            <div><p className="eyebrow">Thiết lập agent</p><h2 id="install-title">Cài máy mới</h2><p>Chạy một lệnh trên máy đang dùng Claude CLI. Script chỉ hỏi username; account và mốc theo dõi được nhận diện tự động.</p></div>
             <button className="secondary-button" type="button" aria-expanded={showInstaller} aria-controls="install-details" onClick={() => setShowInstaller((value) => !value)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" /></svg>
               {showInstaller ? 'Đóng hướng dẫn' : 'Lấy script cài đặt'}

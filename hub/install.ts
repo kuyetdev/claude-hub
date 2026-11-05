@@ -5,21 +5,19 @@ export type InstallPlatform = 'ubuntu' | 'macos';
 export function createInstallScript(platform: InstallPlatform, config: HubConfig, requestOrigin?: string): string {
   const hubUrl = requestOrigin ?? config.publicUrl ?? `http://${config.host}:${config.port}`;
   const prerequisites = platform === 'ubuntu'
-    ? `if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "Đang cài curl và git..."
+  ? `if ! command -v curl >/dev/null 2>&1; then
+  echo "Đang cài curl..."
   sudo apt-get update
-  sudo apt-get install -y curl git ca-certificates
+  sudo apt-get install -y curl ca-certificates
 fi`
-    : `if ! command -v curl >/dev/null 2>&1 || ! command -v git >/dev/null 2>&1; then
-  echo "Thiếu curl hoặc git. Hãy cài Xcode Command Line Tools bằng: xcode-select --install" >&2
+    : `if ! command -v curl >/dev/null 2>&1; then
+  echo "Thiếu curl. Hãy cài Xcode Command Line Tools bằng: xcode-select --install" >&2
   exit 1
 fi`;
   return `#!/usr/bin/env bash
 set -Eeuo pipefail
 
 HUB_URL=${JSON.stringify(hubUrl)}
-REPO_URL="https://github.com/kuyetdev/claude-hub.git"
-BRANCH="feat/hub-usage"
 INSTALL_DIR="\${CLAUDE_HUB_AGENT_DIR:-$HOME/.local/share/claude-hub-agent}"
 BIN_DIR="$HOME/.local/bin"
 NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"
@@ -40,14 +38,21 @@ if [ "$node_major" -lt 24 ]; then
 fi
 
 mkdir -p "$(dirname "$INSTALL_DIR")" "$BIN_DIR"
-if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "Đang cập nhật Claude Hub Agent..."
-  git -C "$INSTALL_DIR" fetch origin "$BRANCH"
-  git -C "$INSTALL_DIR" checkout "$BRANCH"
-  git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
-else
-  git clone --branch "$BRANCH" --single-branch "$REPO_URL" "$INSTALL_DIR"
-fi
+echo "Đang tải Claude Hub Agent từ hub..."
+bundle_tmp="$(mktemp -d)"
+trap 'rm -rf "$bundle_tmp"' EXIT
+curl -fsSL "$HUB_URL/agent/bundle.tar.gz" -o "$bundle_tmp/agent-bundle.tar.gz"
+curl -fsSL "$HUB_URL/agent/version" -o "$bundle_tmp/version"
+mkdir -p "$bundle_tmp/unpacked"
+tar -xzf "$bundle_tmp/agent-bundle.tar.gz" -C "$bundle_tmp/unpacked"
+rm -rf "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/hub"
+cp -R "$bundle_tmp/unpacked/agent" "$INSTALL_DIR/agent"
+cp -R "$bundle_tmp/unpacked/shared" "$INSTALL_DIR/shared"
+cp "$bundle_tmp/unpacked/hub/validate.ts" "$INSTALL_DIR/hub/validate.ts"
+cp "$bundle_tmp/version" "$INSTALL_DIR/.bundle-version"
+rm -rf "$bundle_tmp"
+trap - EXIT
 
 cat > "$BIN_DIR/claude-hub-agent" <<'WRAPPER'
 #!/usr/bin/env bash
@@ -56,6 +61,28 @@ export NVM_DIR="\${NVM_DIR:-$HOME/.nvm}"
 if [ -s "$NVM_DIR/nvm.sh" ]; then
   # shellcheck disable=SC1090
   . "$NVM_DIR/nvm.sh"
+fi
+INSTALL_DIR="\${CLAUDE_HUB_AGENT_DIR:-$HOME/.local/share/claude-hub-agent}"
+CONFIG="$HOME/.claude-storage-agent.json"
+if [ -f "$CONFIG" ] && command -v curl >/dev/null 2>&1; then
+  HUB_URL="$(node -e 'try { process.stdout.write(JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8")).hub || "") } catch {}' "$CONFIG")"
+  if [ -n "$HUB_URL" ]; then
+    latest="$(curl -fsSL --max-time 3 "$HUB_URL/agent/version" 2>/dev/null || true)"
+    current="$(cat "$INSTALL_DIR/.bundle-version" 2>/dev/null || true)"
+    if [ -n "$latest" ] && [ "$latest" != "$current" ] && mkdir "$INSTALL_DIR/.update-lock" 2>/dev/null; then
+      update_tmp="$(mktemp -d)"
+      if curl -fsSL --max-time 15 "$HUB_URL/agent/bundle.tar.gz" -o "$update_tmp/bundle.tar.gz" && \
+        mkdir "$update_tmp/unpacked" && tar -xzf "$update_tmp/bundle.tar.gz" -C "$update_tmp/unpacked"; then
+        rm -rf "$INSTALL_DIR/agent" "$INSTALL_DIR/shared" "$INSTALL_DIR/hub"
+        mkdir -p "$INSTALL_DIR/hub"
+        cp -R "$update_tmp/unpacked/agent" "$INSTALL_DIR/agent"
+        cp -R "$update_tmp/unpacked/shared" "$INSTALL_DIR/shared"
+        cp "$update_tmp/unpacked/hub/validate.ts" "$INSTALL_DIR/hub/validate.ts"
+        printf '%s' "$latest" > "$INSTALL_DIR/.bundle-version"
+      fi
+      rm -rf "$update_tmp" "$INSTALL_DIR/.update-lock"
+    fi
+  fi
 fi
 exec node "\${CLAUDE_HUB_AGENT_DIR:-$HOME/.local/share/claude-hub-agent}/agent/cli.ts" "$@"
 WRAPPER
@@ -78,6 +105,7 @@ fi
 echo
 echo "Cài đặt hoàn tất. Lệnh gửi báo cáo:"
 echo "  $BIN_DIR/claude-hub-agent report"
+echo "Agent tự cập nhật từ Claude Hub mỗi khi chạy."
 echo "Hook Stop đã được cài. Backup settings nằm tại ~/.claude/settings.json.claude-hub.bak (nếu file cũ tồn tại)."
 `;
 }

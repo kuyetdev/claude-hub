@@ -240,6 +240,23 @@ export function createHandler(db: DatabaseSync, config: HubConfig, options: { di
         void options.checkAlerts?.(weekKey).catch((error: unknown) => console.error(redact(`Không thể kiểm tra cảnh báo: ${error instanceof Error ? error.message : String(error)}`)));
         return;
       }
+      if (request.method === 'GET' && url.pathname === '/agent/version') {
+        const versionPath = join(process.cwd(), 'agent-bundle.version');
+        if (!existsSync(versionPath)) return sendJson(response, 404, { error: 'Agent bundle chưa được build.' });
+        return sendText(response, 200, readFileSync(versionPath, 'utf8').trim());
+      }
+      if (request.method === 'GET' && url.pathname === '/agent/bundle.tar.gz') {
+        const bundlePath = join(process.cwd(), 'agent-bundle.tar.gz');
+        if (!existsSync(bundlePath)) return sendJson(response, 404, { error: 'Agent bundle chưa được build.' });
+        const bundle = readFileSync(bundlePath);
+        response.writeHead(200, {
+          'content-type': 'application/gzip', 'content-length': bundle.length,
+          'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          'content-disposition': 'attachment; filename="claude-hub-agent.tar.gz"',
+        });
+        response.end(bundle);
+        return;
+      }
       if (request.method === 'GET' && url.pathname === '/install/ubuntu.sh') {
         return sendText(response, 200, createInstallScript('ubuntu', config, installOrigin(request)));
       }
