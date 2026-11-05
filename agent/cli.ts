@@ -48,35 +48,23 @@ async function register(args: string[]): Promise<void> {
   if (hubIndex < 0 || !args[hubIndex + 1]) throw new Error('Cách dùng: register --hub http://100.x.y.z:4318');
   const hub = normalizeHub(args[hubIndex + 1]);
   const existing = await readJson<AgentConfig>(CONFIG_PATH);
-  if (existing) {
-    const answer = (await question('Máy đã đăng ký. Đăng ký lại và thu hồi token cũ? [y/N] ')).toLowerCase();
-    if (!['y', 'yes', 'c', 'co', 'có'].includes(answer)) { console.info('Giữ nguyên đăng ký hiện tại.'); return; }
+  if (existing?.hub === hub) {
+    console.info(`Máy đã đăng ký cho ${existing.username}; giữ nguyên đăng ký hiện tại.`);
+    return;
   }
-  let username = '';
-  while (!USERNAME_RE.test(username)) {
+  let username = existing?.username ?? '';
+  while (!existing && !USERNAME_RE.test(username)) {
     username = (await question('Username (2–32 ký tự: a-z, 0-9, - hoặc _): ')).toLowerCase();
     if (!USERNAME_RE.test(username)) console.info('Username không hợp lệ, vui lòng nhập lại.');
   }
   const machineId = existing?.machineId ?? randomUUID();
   const accountTrackingSince = { ...(existing?.accountTrackingSince ?? {}) };
-  let currentAccountUuid: string | undefined;
-  try {
-    const claudeConfig = JSON.parse(await readFile(join(homedir(), '.claude.json'), 'utf8')) as { oauthAccount?: { accountUuid?: unknown } };
-    const accountUuid = claudeConfig.oauthAccount?.accountUuid;
-    if (typeof accountUuid === 'string' && accountUuid.length >= 3) {
-      currentAccountUuid = accountUuid;
-      if (!Object.hasOwn(accountTrackingSince, accountUuid)) {
-        const answer = (await question('Đã dùng account Claude hiện tại trong kỳ tuần này trước khi vào Hub? [Y/n] ')).toLowerCase();
-        accountTrackingSince[accountUuid] = ['n', 'no', 'không', 'khong'].includes(answer) ? Date.now() : 0;
-      }
-    }
-  } catch { /* First report will initialize tracking for accounts not present locally yet. */ }
   let response: Response;
   try {
     response = await fetch(`${hub}/api/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username, machineId, hostname: hostname(), accountUuid: currentAccountUuid, trackingSinceMs: currentAccountUuid ? accountTrackingSince[currentAccountUuid] : undefined }),
+      body: JSON.stringify({ username, machineId, hostname: hostname() }),
       signal: AbortSignal.timeout(10_000),
     });
   } catch (error) {
