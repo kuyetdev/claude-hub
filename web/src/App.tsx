@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Highcharts from 'highcharts';
-import HighchartsReact from 'highcharts-react-official';
+import { HighchartsReact } from 'highcharts-react-official';
 import type { HubState, UsageHistoryPoint, UserState } from '../../shared/types.ts';
 import { getHistory, getState, removeMachine, saveQuotas, setAppendOnlyUsage } from './api.ts';
 
