@@ -89,7 +89,7 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
   const liveWeekly = liveIsCurrent && typeof live?.sevenDay?.usedPercentage === 'number' ? live.sevenDay.usedPercentage : undefined;
   const liveResetAt = liveIsCurrent ? resetIso(live?.sevenDay?.resetsAt) : undefined;
   const cachedResetAt = resetIso(week?.resets_at);
-  const sameResetWindow = Boolean(liveResetAt && cachedResetAt && liveResetAt === cachedResetAt);
+  const sameResetWindow = Boolean(liveResetAt && cachedResetAt && Math.abs(Date.parse(liveResetAt) - Date.parse(cachedResetAt)) < 60_000);
   const useLiveRateLimits = liveWeekly !== undefined && (cachedFetchedAt === undefined || liveFetchedAt! >= cachedFetchedAt);
   const weeklyPercent = liveWeekly !== undefined && cachedWeekly !== undefined && sameResetWindow
     ? Math.max(liveWeekly, cachedWeekly)
