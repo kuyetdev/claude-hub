@@ -71,6 +71,11 @@ function resetIso(value: unknown): string | undefined {
   return raw && Number.isFinite(raw.getTime()) ? raw.toISOString() : undefined;
 }
 
+function canonicalReset(value: string): string {
+  const timestamp = Date.parse(value);
+  return new Date(Math.round(timestamp / 60_000) * 60_000).toISOString();
+}
+
 export async function scanClaudeHome(claudeHome: string, previous: AgentState = emptyState(), now = Date.now(), tokenResetAt?: string, rateLimitCachePath?: string): Promise<{ payload: Omit<ReportPayload, 'machineId' | 'agentVersion' | 'sentAtMs'>; state: AgentState }> {
   const rawConfig = await readFile(join(claudeHome, '..', '.claude.json'), 'utf8');
   const config = JSON.parse(rawConfig) as ClaudeConfig;
@@ -102,7 +107,9 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
   if (!liveReset && (typeof week?.resets_at !== 'string' || !Number.isFinite(Date.parse(week.resets_at)))) throw new Error('Không tìm thấy giờ reset tuần trong ~/.claude.json.');
   if (weeklyPercent === undefined || utilizationFetchedAt === undefined) throw new Error('Không tìm thấy số liệu usage tuần trong ~/.claude.json.');
 
-  const accountResetAt = liveReset ?? new Date(week!.resets_at as string).toISOString();
+  // Claude's statusLine and cached usage can differ by a few seconds; normalize the reset boundary
+  // so that the persisted weekly accumulator is not cleared when the source switches.
+  const accountResetAt = canonicalReset(liveReset ?? week!.resets_at as string);
   const weekKey = tokenResetAt ? new Date(tokenResetAt).toISOString() : accountResetAt;
   const state = previous.weekKey === weekKey ? structuredClone(previous) : emptyState();
   state.weekKey = weekKey;
