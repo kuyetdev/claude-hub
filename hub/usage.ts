@@ -29,6 +29,10 @@ function parseJson<T>(value: string | null, fallback: T): T {
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
+function rawTokens(models: Record<string, TokenTotals>): number {
+  return Object.values(models).reduce((sum, tokens) => sum + tokens.input + tokens.output + tokens.cacheCreation + tokens.cacheRead, 0);
+}
+
 export function computeState(db: DatabaseSync, weights: WeightConfig, telegramConfigured: boolean, now = Date.now(), requestedAccount?: string | null): HubState {
   const accounts = db.prepare(`SELECT a.account_uuid AS accountUuid, a.email,
       (SELECT r.week_key FROM reports r WHERE r.account_uuid = a.account_uuid ORDER BY r.received_ms DESC LIMIT 1) AS resetAt
@@ -59,12 +63,22 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   for (const row of rows) {
     let user = byUser.get(row.username);
     if (!user) {
-      user = { username: row.username, quotaPercent: row.quotaPercent, usedPercent: 0, quotaRatioPercent: 0, weightedTokens: 0, machines: [] };
+      user = { username: row.username, quotaPercent: row.quotaPercent, usedPercent: 0, quotaRatioPercent: 0, weightedTokens: 0, modelUsages: [], machines: [] };
       byUser.set(row.username, user);
     }
     if (row.machineId) {
       const machineWeekKey = row.weekKey ? normalizeWeekKey(row.weekKey) : null;
-      const machineWeighted = machineWeekKey === weekKey ? weightedTokens(parseJson(row.tokensJson, {}), weights) : 0;
+      const machineModels = machineWeekKey === weekKey ? parseJson<Record<string, TokenTotals>>(row.tokensJson, {}) : {};
+      const machineWeighted = weightedTokens(machineModels, weights);
+      for (const [model, totals] of Object.entries(machineModels)) {
+        let usage = user.modelUsages.find((item) => item.model === model);
+        if (!usage) {
+          usage = { model, tokenCount: 0, weightedTokens: 0, sharePercent: 0 };
+          user.modelUsages.push(usage);
+        }
+        usage.tokenCount += rawTokens({ [model]: totals });
+        usage.weightedTokens += weightedTokens({ [model]: totals }, weights);
+      }
       user.machines.push({
         machineId: row.machineId, hostname: row.hostname, lastSeenMs: row.lastSeenMs,
         agentVersion: row.agentVersion, offline: row.lastSeenMs === 0 || now - row.lastSeenMs > 30 * 60_000,
@@ -81,6 +95,10 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
   for (const user of users) {
     user.usedPercent = totalWeighted > 0 ? accountPercent * user.weightedTokens / totalWeighted : 0;
     user.quotaRatioPercent = user.quotaPercent > 0 ? user.usedPercent / user.quotaPercent * 100 : (user.usedPercent > 0 ? 100 : 0);
+    for (const model of user.modelUsages) {
+      model.sharePercent = user.weightedTokens > 0 ? model.weightedTokens / user.weightedTokens * 100 : 0;
+    }
+    user.modelUsages.sort((a, b) => b.weightedTokens - a.weightedTokens || a.model.localeCompare(b.model));
     for (const machine of user.machines) {
       machine.observedSharePercent = totalWeighted > 0 ? machine.weightedTokens / totalWeighted * 100 : 0;
       machine.usedPercent = totalWeighted > 0 ? accountPercent * machine.weightedTokens / totalWeighted : 0;

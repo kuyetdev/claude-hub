@@ -23,6 +23,14 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
     </div>
     <Progress value={user.usedPercent} ratio={user.quotaRatioPercent} label={`${user.username} đã dùng ${formatPercent(user.quotaRatioPercent)} quota`} />
     <p className="approx">Quy đổi xấp xỉ: <span className="mono">{number.format(user.weightedTokens)}</span> token trọng số</p>
+    {user.modelUsages.length > 0 && <section className="model-breakdown" aria-label={`Token theo model của ${user.username}`}>
+      <h4>Theo model <span>Tỷ trọng trên tổng của user</span></h4>
+      {user.modelUsages.map((usage) => <div className="model-row" key={usage.model}>
+        <div className="model-row-head"><strong>{usage.model}</strong><span>{formatPercent(usage.sharePercent)}</span></div>
+        <div className="model-meter" role="progressbar" aria-label={`${usage.model}: ${formatPercent(usage.sharePercent)} token trọng số`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(usage.sharePercent)}><span style={{ transform: `scaleX(${Math.min(usage.sharePercent, 100) / 100})` }} /></div>
+        <small>{number.format(usage.tokenCount)} token thô · {number.format(usage.weightedTokens)} token trọng số</small>
+      </div>)}
+    </section>}
     <div className="machines">
       <h4>Máy đã đăng ký <span>{user.machines.length}</span></h4>
       {user.machines.length === 0 ? <p className="empty">Chưa có máy.</p> : user.machines.map((machine) => <div className="machine" key={machine.machineId}>

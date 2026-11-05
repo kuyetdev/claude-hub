@@ -42,6 +42,7 @@ export interface UserState {
   usedPercent: number;
   quotaRatioPercent: number;
   weightedTokens: number;
+  modelUsages: Array<{ model: string; tokenCount: number; weightedTokens: number; sharePercent: number }>;
   machines: MachineState[];
 }
 
