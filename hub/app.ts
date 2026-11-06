@@ -7,7 +7,7 @@ import type { HubConfig } from './config.ts';
 import type { ReportPayload, TokenTotals } from '../shared/types.ts';
 import { redact, redactDeep } from '../server/redact.ts';
 import { isReport, normalizeWeekKey, USERNAME_RE, UUID_RE } from './validate.ts';
-import { computeState, readUsageHistory, setUsageAppendOnly, updateQuotas, usageAppendOnly } from './usage.ts';
+import { claudeOnlyModels, computeState, readUsageHistory, setUsageAppendOnly, updateQuotas, usageAppendOnly } from './usage.ts';
 import { createInstallScript } from './install.ts';
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -149,14 +149,15 @@ function saveReport(db: DatabaseSync, report: ReportPayload, now: number): strin
       db.prepare('INSERT INTO account_users(account_uuid, username, quota_percent, quota_manual) VALUES (?, ?, ?, 0)')
         .run(report.accountUuid, machineOwner.username, hasManual ? 0 : 100 / (count + 1));
     }
-    let tokensByModel = report.tokensByModel;
+    const incomingModels = claudeOnlyModels(report.tokensByModel);
+    let tokensByModel = incomingModels;
     let utilization = report.utilization;
     if (previous && normalizeWeekKey(previous.weekKey) === weekKey) {
-      const oldTokens = JSON.parse(previous.tokensJson) as Record<string, TokenTotals>;
+      const oldTokens = claudeOnlyModels(JSON.parse(previous.tokensJson) as Record<string, TokenTotals>);
       const oldUtilization = JSON.parse(previous.utilizationJson) as ReportPayload['utilization'];
       if (usageAppendOnly(db)) {
         tokensByModel = { ...oldTokens };
-        for (const [model, incoming] of Object.entries(report.tokensByModel)) {
+        for (const [model, incoming] of Object.entries(incomingModels)) {
           const old = oldTokens[model];
           if (!old) { tokensByModel[model] = incoming; continue; }
           const merged: TokenTotals = { ...old };

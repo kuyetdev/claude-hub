@@ -49,7 +49,7 @@ function parseUsageLine(line: string, cutoffMs: number): { id: string; model: st
     const messageId = typeof message.id === 'string' ? message.id : '';
     const requestId = typeof item.requestId === 'string' ? item.requestId : '';
     if (!messageId || !requestId || typeof message.model !== 'string' || !message.model) return undefined;
-    if (!message.model.startsWith('claude-') && message.model !== '<synthetic>') return undefined;
+    if (!message.model.startsWith('claude-')) return undefined;
     const creation = usage.cache_creation && typeof usage.cache_creation === 'object' ? usage.cache_creation as Record<string, unknown> : {};
     const cacheCreation5m = numberOrZero(creation.ephemeral_5m_input_tokens);
     const cacheCreation1h = numberOrZero(creation.ephemeral_1h_input_tokens);
@@ -168,6 +168,10 @@ export async function scanClaudeHome(claudeHome: string, previous: AgentState = 
   if (accountState.weekKey !== weekKey) {
     accountState.weekKey = weekKey;
     accountState.tokensByModel = {};
+  }
+  // Drop models collected by older agent versions or synthetic transcript entries.
+  for (const model of Object.keys(accountState.tokensByModel)) {
+    if (!model.startsWith('claude-')) delete accountState.tokensByModel[model];
   }
   state.accounts[accountUuid as string] = accountState;
   const seen = new Set(state.seen);

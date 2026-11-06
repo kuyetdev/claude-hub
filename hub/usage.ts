@@ -39,7 +39,8 @@ export function readUsageHistory(db: DatabaseSync, accountUuid: string | null, w
     const timestamp = rows[index]!.timestamp;
     while (index < rows.length && rows[index]!.timestamp === timestamp) {
       const row = rows[index++]!;
-      perMachine.set(row.machineId, { username: row.username, weighted: weightedTokens(parseJson<Record<string, TokenTotals>>(row.tokensJson, {}), weights) });
+      const models = claudeOnlyModels(parseJson<Record<string, TokenTotals>>(row.tokensJson, {}));
+      perMachine.set(row.machineId, { username: row.username, weighted: weightedTokens(models, weights) });
     }
     const weightedTokensByUser: Record<string, number> = {};
     for (const machine of perMachine.values()) weightedTokensByUser[machine.username] = (weightedTokensByUser[machine.username] ?? 0) + machine.weighted;
@@ -64,6 +65,10 @@ export function setUsageAppendOnly(db: DatabaseSync, enabled: boolean): void {
 function parseJson<T>(value: string | null, fallback: T): T {
   if (!value) return fallback;
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+export function claudeOnlyModels(models: Record<string, TokenTotals>): Record<string, TokenTotals> {
+  return Object.fromEntries(Object.entries(models).filter(([model]) => model.startsWith('claude-')));
 }
 
 function rawTokens(models: Record<string, TokenTotals>): number {
@@ -105,7 +110,9 @@ export function computeState(db: DatabaseSync, weights: WeightConfig, telegramCo
     }
     if (row.machineId) {
       const machineWeekKey = row.weekKey ? normalizeWeekKey(row.weekKey) : null;
-      const machineModels = machineWeekKey === weekKey ? parseJson<Record<string, TokenTotals>>(row.tokensJson, {}) : {};
+      const machineModels = machineWeekKey === weekKey
+        ? claudeOnlyModels(parseJson<Record<string, TokenTotals>>(row.tokensJson, {}))
+        : {};
       const machineWeighted = weightedTokens(machineModels, weights);
       for (const [model, totals] of Object.entries(machineModels)) {
         let usage = user.modelUsages.find((item) => item.model === model);
