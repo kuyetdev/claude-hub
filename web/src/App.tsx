@@ -187,8 +187,13 @@ export function App() {
 
   useEffect(() => {
     void refresh();
-    const interval = window.setInterval(() => void refresh(true), 60_000);
-    return () => window.clearInterval(interval);
+    const interval = window.setInterval(() => void refresh(true), 5 * 60_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(true); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
 
   const draftTotal = useMemo(() => Object.values(draft).reduce((sum, value) => sum + (Number(value) || 0), 0), [draft]);

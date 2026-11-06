@@ -1,7 +1,7 @@
 import type { HubState, UsageHistoryPoint } from '../../shared/types.ts';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
+  const response = await fetch(path, { ...init, cache: 'no-store' });
   const body = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(body.error ?? `Yêu cầu thất bại (HTTP ${response.status}).`);
   return body;

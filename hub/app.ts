@@ -222,6 +222,7 @@ function serveStatic(response: ServerResponse, distDir: string, pathname: string
   response.writeHead(200, {
     'content-type': MIME[extname(selected)] ?? 'application/octet-stream',
     'content-length': body.length,
+    'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
     'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
   });
