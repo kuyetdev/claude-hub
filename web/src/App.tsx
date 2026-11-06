@@ -7,9 +7,18 @@ import { getHistory, getState, removeMachine, saveQuotas, setAppendOnlyUsage } f
 const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dateTime = new Intl.DateTimeFormat('vi-VN', { dateStyle: 'short', timeStyle: 'short' });
+const dayLabel = new Intl.DateTimeFormat('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
 function formatPercent(value: number): string { return `${number.format(value)}%`; }
 function formatTime(value: number | string | null): string { return value ? dateTime.format(new Date(value)) : 'Chưa có dữ liệu'; }
+function localDayKey(value: number): string {
+  const date = new Date(value);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+function localDayStart(key: string): number {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year!, month! - 1, day!).getTime();
+}
 function shortCount(value: number): string {
   const units: Array<[number, string]> = [[1_000_000_000, 'b'], [1_000_000, 'm'], [1_000, 'k']];
   for (const [size, suffix] of units) if (value >= size) return `${number.format(value / size)}${suffix}`;
@@ -145,6 +154,7 @@ function UserCard({ user, onRemove, busy }: { user: UserState; onRemove: (id: st
 export function App() {
   const [state, setState] = useState<HubState>();
   const [history, setHistory] = useState<UsageHistoryPoint[]>([]);
+  const [historyDay, setHistoryDay] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -197,16 +207,39 @@ export function App() {
   }, [refresh]);
 
   const draftTotal = useMemo(() => Object.values(draft).reduce((sum, value) => sum + (Number(value) || 0), 0), [draft]);
+  const historyWindow = useMemo(() => {
+    const resetAt = state?.weekKey ? Date.parse(state.weekKey) : Date.now();
+    const start = resetAt - 7 * 86400_000;
+    const end = Math.max(start, Math.min(Date.now(), resetAt));
+    const days: string[] = [];
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    while (cursor.getTime() <= end) {
+      days.push(localDayKey(cursor.getTime()));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return { start, end, days };
+  }, [state]);
+  const selectedHistoryDay = historyWindow.days.includes(historyDay) ? historyDay : 'all';
   const chartOptions = useMemo<Highcharts.Options>(() => {
     const total = state?.users.reduce((sum, user) => sum + user.weightedTokens, 0) ?? 0;
-    const start = state?.weekKey ? Date.parse(state.weekKey) - 7 * 86400_000 : undefined;
+    const start = historyWindow.start;
+    const end = historyWindow.end;
+    const dailyStart = selectedHistoryDay === 'all' ? start : Math.max(start, localDayStart(selectedHistoryDay));
+    const nextDay = selectedHistoryDay === 'all' ? end : localDayStart(selectedHistoryDay) + 86400_000;
+    const dailyEnd = Math.min(end, nextDay);
+    const inRange = history.filter((point) => point.timestamp >= start && point.timestamp <= end);
+    const baseline = inRange.filter((point) => point.timestamp < dailyStart).at(-1);
+    const visiblePoints = selectedHistoryDay === 'all' ? inRange : inRange.filter((point) => point.timestamp >= dailyStart && point.timestamp <= dailyEnd);
     const colors = ['#62d8c0', '#f0bf68', '#8fa7ff', '#e98f9a', '#b393e8', '#91c9df'];
     const series: Highcharts.SeriesLineOptions[] = (state?.users ?? []).map((user, index) => ({
       type: 'line', name: user.username, color: colors[index % colors.length], lineWidth: 2.5,
       marker: { enabled: false },
       data: [
-        ...(start === undefined ? [] : [[start, 0] as [number, number]]),
-        ...history.map((point) => {
+        [dailyStart, baseline && total > 0 && user.quotaPercent > 0
+          ? (baseline.weightedTokensByUser[user.username] ?? 0) / total * state!.accountPercent / user.quotaPercent * 100
+          : 0] as [number, number],
+        ...visiblePoints.map((point) => {
           const weighted = point.weightedTokensByUser[user.username] ?? 0;
           const value = total > 0 && user.quotaPercent > 0
             ? weighted / total * state!.accountPercent / user.quotaPercent * 100 : 0;
@@ -217,14 +250,14 @@ export function App() {
     return {
       chart: { type: 'line', height: 300, backgroundColor: 'transparent', spacing: [12, 8, 8, 8], style: { fontFamily: 'inherit' } },
       title: { text: undefined }, credits: { enabled: false }, exporting: { enabled: false },
-      xAxis: { type: 'datetime', lineColor: '#2b3a3e', tickColor: '#2b3a3e', labels: { style: { color: '#a8b8bb' } } },
+      xAxis: { type: 'datetime', min: dailyStart, max: dailyEnd, lineColor: '#2b3a3e', tickColor: '#2b3a3e', labels: { style: { color: '#a8b8bb' } } },
       yAxis: { min: 0, title: { text: undefined }, gridLineColor: '#263438', labels: { format: '{value}%', style: { color: '#a8b8bb' } } },
       legend: { itemStyle: { color: '#eaf1f2', fontWeight: '600' }, itemHoverStyle: { color: '#62d8c0' } },
       tooltip: { shared: true, xDateFormat: '%d/%m %H:%M', valueDecimals: 1, valueSuffix: '% quota' },
       plotOptions: { series: { animation: false, states: { inactive: { opacity: 0.35 } } } },
       series,
     };
-  }, [history, state]);
+  }, [history, historyWindow, selectedHistoryDay, state]);
   const installCommand = `bash <(curl -fsSL ${window.location.origin}/install/${installPlatform}.sh)`;
 
   async function copyInstallCommand() {
@@ -313,12 +346,14 @@ export function App() {
         </section>
 
         <section className="section history-section" aria-labelledby="history-title">
-          <div className="section-head"><div><p className="eyebrow">Tiến trình trong kỳ</p><h2 id="history-title">Mức dùng theo người</h2></div></div>
+          <div className="section-head"><div><p className="eyebrow">Tiến trình từ lần reset gần nhất · tối đa 7 ngày</p><h2 id="history-title">Mức dùng theo người</h2></div>
+            <label className="history-filter"><span>Lọc theo ngày</span><select value={selectedHistoryDay} onChange={(event) => setHistoryDay(event.target.value)}><option value="all">Toàn kỳ (tối đa 7 ngày)</option>{historyWindow.days.map((day) => <option key={day} value={day}>{dayLabel.format(new Date(`${day}T12:00:00`))}</option>)}</select></label>
+          </div>
           <div className="history-chart">
             {history.length > 0 ? <HighchartsReact highcharts={Highcharts} options={chartOptions} />
               : <p className="history-empty">Lịch sử biểu đồ sẽ được ghi nhận từ các report sau khi tính năng này được cài đặt.</p>}
           </div>
-          <p className="history-note">Ước tính tỷ lệ quota theo token trọng số; đường biểu đồ chỉ có dữ liệu từ khi Hub bắt đầu lưu lịch sử.</p>
+          <p className="history-note">Ước tính tỷ lệ quota theo token trọng số trong kỳ reset hiện tại; chọn một ngày để phóng to phần sử dụng của ngày đó.</p>
         </section>
 
         <section className="section" aria-labelledby="people-title">

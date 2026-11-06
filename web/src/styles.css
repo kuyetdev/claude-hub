@@ -80,6 +80,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .history-chart { min-height: 230px; padding: 10px 14px; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .history-empty { min-height: 210px; display: grid; place-items: center; margin: 0; color: var(--muted); text-align: center; }
 .history-note { margin: 8px 2px 0; color: var(--muted); font-size: 12px; }
+.history-filter { width: min(290px, 38%); display: grid; grid-template-columns: auto minmax(160px, 1fr); align-items: center; gap: 10px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.history-filter > span:first-child { margin: 0; }
+.history-filter select { height: 38px; font-size: 12px; }
 .data-policy { margin-top: 26px; padding: 0; overflow: hidden; }
 .data-policy > summary { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px; cursor: pointer; list-style-position: inside; }
 .data-policy > summary > span { display: inline-flex; flex-direction: column; gap: 3px; vertical-align: middle; }
@@ -160,6 +163,6 @@ footer { min-height: 82px; display: flex; justify-content: space-between; align-
 @media (max-width: 820px) { .overview { grid-template-columns: 1fr; }.method-note { border-left: 0; border-top: 1px solid var(--border); }.user-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) {
   body { font-size: 16px; }.app-shell { width: min(100% - 24px, 1240px); }.topbar { min-height: 80px; flex-wrap: wrap; padding: 10px 0; }.brand p { display: none; }.account-picker { order: 3; width: 100%; margin: 0; }.account-picker-menu { width: 100%; max-width: 100%; }.topbar > .secondary-button { margin-top: 0; }.secondary-button { width: 44px; padding: 0; font-size: 0; }.secondary-button svg { width: 20px; }
-  .overview-main, .method-note, .admin-panel { padding: 20px; }.account-value { font-size: 48px; }.overview-meta { display: grid; gap: 8px; }.user-card { padding: 17px; }.machine { grid-template-columns: 8px minmax(0, 1fr) 36px; }.machine-status { display: none; }
+  .overview-main, .method-note, .admin-panel { padding: 20px; }.account-value { font-size: 48px; }.overview-meta { display: grid; gap: 8px; }.user-card { padding: 17px; }.machine { grid-template-columns: 8px minmax(0, 1fr) 36px; }.machine-status { display: none; }.history-filter { width: 100%; grid-template-columns: 1fr; gap: 4px; }
   .schedule-fields, .command-row { grid-template-columns: 1fr; }.admin-actions .primary-button, .schedule-fields .primary-button, .copy-button { width: 100%; }.install-summary { align-items: stretch; flex-direction: column; padding: 20px; }.install-details { padding: 18px 20px 20px; }.install-summary .secondary-button { width: 100%; }.banner { grid-template-columns: 1fr; }.section-head { align-items: center; } footer { align-items: flex-start; flex-direction: column; justify-content: center; }
 }
